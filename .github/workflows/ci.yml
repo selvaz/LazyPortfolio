@@ -1,0 +1,98 @@
+name: ci
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+
+# Least privilege: every job only reads the repo. Steps run third-party code
+# (actions + git-sourced dependencies), so the token must not be writable.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Pytest
+        run: |
+          set -o pipefail
+          pytest -q --cov=lazyportfolio --cov-report=term-missing \
+            2>&1 | tee pytest-${{ matrix.python-version }}.log
+      - name: Upload pytest diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ matrix.python-version }}-diagnostics
+          path: pytest-${{ matrix.python-version }}.log
+          if-no-files-found: ignore
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Quality checks
+        run: |
+          set +e
+          ruff check src tests project/tree_studio.py > ruff.log 2>&1
+          ruff_status=$?
+          mypy src/lazyportfolio > mypy.log 2>&1
+          mypy_status=$?
+          cat ruff.log
+          cat mypy.log
+          if [ "$ruff_status" -ne 0 ] || [ "$mypy_status" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload quality diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-diagnostics
+          path: |
+            ruff.log
+            mypy.log
+          if-no-files-found: ignore
+
+  js-quality:
+    # Behavioral (not string-matching) tests for project/tree_studio.html's
+    # node-form contract: lossless round-trip, explicit-zero preservation,
+    # corrected backward/raw terminology. Node's built-in test runner + jsdom.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm ci
+      - name: JS syntax check
+        run: |
+          node -e "
+            const fs = require('fs');
+            const html = fs.readFileSync('project/tree_studio.html', 'utf-8');
+            const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+            fs.writeFileSync('/tmp/tree_studio_script.js', script);
+          "
+          node --check /tmp/tree_studio_script.js
+      - name: Tree Studio contract tests
+        run: npm test
