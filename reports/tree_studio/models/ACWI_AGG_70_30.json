@@ -1,0 +1,353 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "Global allocation",
+      "children": [
+        "equity",
+        "bonds",
+        "commodities",
+        "alternative"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "max_tracking_error": 0.05,
+        "tracking_error_reference": "benchmark",
+        "tracking_error_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      }
+    },
+    {
+      "id": "equity",
+      "name": "Equity",
+      "children": [
+        "eq_developed",
+        "eq_emerging"
+      ],
+      "instruments": [],
+      "proxy": "ACWI",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "eq_developed",
+      "name": "Equity Developed",
+      "children": [
+        "eq_us",
+        "eq_europe"
+      ],
+      "instruments": [
+        "EWJ",
+        "EWC",
+        "EWA"
+      ],
+      "proxy": "VEA",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "eq_us",
+      "name": "Equity US",
+      "children": [],
+      "instruments": [
+        "XLC",
+        "XLY",
+        "XLP",
+        "XLE",
+        "XLF",
+        "XLV",
+        "XLI",
+        "XLU",
+        "XLB",
+        "VGT",
+        "XLRE"
+      ],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "eq_europe",
+      "name": "Equity Europe",
+      "children": [],
+      "instruments": [
+        "EXV1.DE",
+        "EXV3.DE",
+        "EXV4.DE",
+        "EXH4.DE",
+        "EXH1.DE",
+        "EXH9.DE"
+      ],
+      "proxy": "VGK",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "eq_emerging",
+      "name": "Equity Emerging",
+      "children": [],
+      "instruments": [
+        "MCHI",
+        "EWT",
+        "INDA",
+        "EWY",
+        "EWZ",
+        "EWW",
+        "EZA",
+        "KSA"
+      ],
+      "proxy": "VWO",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "bonds",
+      "name": "Bonds",
+      "children": [
+        "bonds_developed",
+        "bonds_em"
+      ],
+      "instruments": [],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "bonds_developed",
+      "name": "Bonds Developed",
+      "children": [],
+      "instruments": [
+        "TLT",
+        "SHY",
+        "IBCL.DE",
+        "DBXP.DE",
+        "LQD",
+        "HYG",
+        "IEAC.AS",
+        "EUHY"
+      ],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "bonds_em",
+      "name": "Bonds Emerging",
+      "children": [],
+      "instruments": [
+        "EMB",
+        "EMLC"
+      ],
+      "proxy": "EMB",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "commodities",
+      "name": "Commodities",
+      "children": [
+        "commodities_metals",
+        "commodities_fuel",
+        "commodities_agriculture"
+      ],
+      "instruments": [],
+      "proxy": "DBC",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "commodities_metals",
+      "name": "Commodities Metals",
+      "children": [],
+      "instruments": [
+        "GLD",
+        "SLV",
+        "PPLT",
+        "PALL",
+        "DBB",
+        "CPER"
+      ],
+      "proxy": "GLD",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "commodities_fuel",
+      "name": "Commodities Fuel",
+      "children": [],
+      "instruments": [
+        "USO",
+        "UNG",
+        "UGA"
+      ],
+      "proxy": "USO",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "commodities_agriculture",
+      "name": "Commodities Agriculture",
+      "children": [],
+      "instruments": [
+        "DBA",
+        "CORN",
+        "WEAT",
+        "SOYB"
+      ],
+      "proxy": "DBA",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    },
+    {
+      "id": "alternative",
+      "name": "Alternative",
+      "children": [],
+      "instruments": [
+        "VNQ",
+        "VNQI",
+        "IGF",
+        "BTC-USD"
+      ],
+      "proxy": "VNQ",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "cash_enabled": true,
+        "max_leverage": 1.5
+      },
+      "representation": "proxy"
+    }
+  ],
+  "data": {
+    "start": "2010-01-01",
+    "end": ""
+  },
+  "backtest": {
+    "id": "acwi-agg-70-30",
+    "train_size": 104,
+    "rebalance_frequency": "M",
+    "estimation_frequency": "W",
+    "transaction_cost_bps": "5",
+    "forward_enabled": true,
+    "hierarchy_mode": "synthetic_reconstructed",
+    "benchmark": {
+      "id": "B0",
+      "name": "ACWI / AGG 70/30",
+      "weights": {
+        "ACWI": 0.7,
+        "AGG": 0.3
+      }
+    },
+    "scientific_study": {
+      "enabled": true,
+      "bootstrap_samples": 2000,
+      "bootstrap_block_size": 20,
+      "random_seed": 7
+    }
+  }
+}

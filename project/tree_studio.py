@@ -1,0 +1,790 @@
+"""Local visual editor and runner for LazyPortfolio V2 hierarchical allocation trees.
+
+Run with ``python project/tree_studio.py`` and open the URL printed by the
+server.  The application deliberately binds to localhost: it is a workstation
+tool and it can access the user's local Market Data Hub database.
+
+Tree Studio is V2-only.  There is one hierarchical engine
+(``lazyportfolio.hierarchical_v2``); it does not call any legacy
+allocation tree, backend, or backtester.
+"""
+
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+import mimetypes
+import re
+import sys
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Lock
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
+
+from tree_studio_v2.exports import build_audit_bundle, build_client_report
+
+from lazyportfolio.backend import MarketDataHubOptimizationBackend, OptimizationDataset
+from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns
+from lazyportfolio.hierarchical_v2 import (
+    HierarchicalV2Backtester,
+    HierarchicalV2Estimator,
+    V2Model,
+    V2OptimizationError,
+)
+from lazyportfolio.scientific_study import (
+    ScientificStudyProtocol,
+    ScientificStudyResult,
+    run_scientific_study,
+)
+
+APP_DIR = Path(__file__).resolve().parent
+INDEX_FILE = APP_DIR / "tree_studio.html"
+MODEL_DIR = APP_DIR.parent / "reports" / "tree_studio" / "models"
+_TICKER = re.compile(r"^[A-Za-z0-9.\-]+$")
+_MODEL_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
+
+
+class StudioConfigError(ValueError):
+    """A configuration cannot be represented by the V2 contract."""
+
+
+def _model_path(name: Any) -> Path:
+    """Return the local, Git-ignored path for a named Studio model."""
+    cleaned = _MODEL_NAME.sub("-", str(name).strip()).strip(" .-")
+    if not cleaned:
+        raise StudioConfigError("model name cannot be blank")
+    return MODEL_DIR / f"{cleaned[:120]}.json"
+
+
+def _saved_models() -> list[dict[str, str]]:
+    if not MODEL_DIR.exists():
+        return []
+    return [
+        {"name": path.stem, "file": path.name}
+        for path in sorted(MODEL_DIR.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    ]
+
+
+def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
+    model = V2Model.from_config(config)
+    instruments = list(
+        dict.fromkeys(
+            [
+                *model.root.terminal_instruments(),
+                *(node.proxy for node in model.root.walk() if node.proxy),
+                *model.benchmark.weights,
+            ]
+        )
+    )
+    data = config.get("data") if isinstance(config.get("data"), dict) else {}
+    return model, _load_instruments(instruments, data)
+
+
+def _load_instruments(instruments: list[str], data: dict[str, Any]) -> OptimizationDataset:
+    """Load a complete daily return matrix and identify missing series clearly."""
+    dataset = MarketDataHubOptimizationBackend().load_returns(
+        instruments,
+        start=str(data.get("start") or ""),
+        end=str(data.get("end") or ""),
+    )
+    missing = [instrument for instrument in instruments if instrument not in dataset.returns.columns]
+    if missing:
+        display = [instrument.removeprefix("ticker:") for instrument in missing]
+        raise StudioConfigError(
+            "Market Data Hub has no return series for: " + ", ".join(display)
+        )
+    clean = dataset.returns.dropna(how="any")
+    if len(clean) < 3:
+        raise StudioConfigError("Market Data Hub returned fewer than three complete observations")
+    return OptimizationDataset(returns=clean, metadata={**dataset.metadata, "complete_rows": len(clean)})
+
+
+def _scientific_study_settings(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the study's settings dict, or None when the flag is off/absent.
+
+    This is an app-level flag (``backtest.scientific_study``), not part of the
+    canonical V2 contract validated by ``V2Model.from_config`` -- it only
+    decides whether Tree Studio ALSO runs the offline bootstrap-significance
+    harness (``lazyportfolio.scientific_study``) alongside the normal
+    backtest, so nothing in ``lazyportfolio.v2`` needs to know about it.
+    """
+
+    backtest = config.get("backtest") if isinstance(config.get("backtest"), dict) else {}
+    settings = backtest.get("scientific_study")
+    if not isinstance(settings, dict) or not settings.get("enabled"):
+        return None
+    return settings
+
+
+def _scientific_study_result(
+    config: dict[str, Any],
+    model: V2Model,
+    dataset: OptimizationDataset,
+    mode: str,
+) -> ScientificStudyResult | None:
+    settings = _scientific_study_settings(config)
+    if settings is None:
+        return None
+    backtest = config["backtest"]
+    protocol = ScientificStudyProtocol(
+        train_size=int(backtest.get("train_size") or 104),
+        estimation_frequency=str(backtest.get("estimation_frequency") or "W"),
+        rebalance_frequency=str(backtest.get("rebalance_frequency") or "M"),
+        transaction_cost_bps=float(backtest.get("transaction_cost_bps") or 0),
+        bootstrap_samples=int(settings.get("bootstrap_samples") or 2_000),
+        bootstrap_block_size=int(settings.get("bootstrap_block_size") or 20),
+        random_seed=int(settings.get("random_seed") or 7),
+    )
+    return run_scientific_study(model, dataset.returns, mode=mode, protocol=protocol)
+
+
+def _v2_scientific_study_payload(config: dict[str, Any]) -> dict[str, Any]:
+    model, dataset = _v2_inputs(config)
+    mode = _v2_mode(config)
+    result = _scientific_study_result(config, model, dataset, mode)
+    if result is None:
+        raise StudioConfigError(
+            "scientific study is not enabled: set backtest.scientific_study.enabled = true"
+        )
+    return {
+        "ok": True,
+        "engine": "scientific-study",
+        "mode": mode,
+        "fold_count": result.fold_count,
+        "common_oos_start": result.common_oos_start,
+        "common_oos_end": result.common_oos_end,
+        "metrics": result.metrics,
+        "comparisons": [asdict(item) for item in result.comparisons],
+        "dropped_observations": result.dropped_observations,
+    }
+
+
+def _v2_mode(config: dict[str, Any]) -> str:
+    backtest = config.get("backtest") if isinstance(config.get("backtest"), dict) else {}
+    if not bool(backtest.get("forward_enabled", True)):
+        return "flat"
+    mode = str(backtest.get("hierarchy_mode") or "proxy")
+    if mode == "proxy":
+        return "forward"
+    if mode == "synthetic_reconstructed":
+        return "forward_backward"
+    raise StudioConfigError(
+        "V2 iterative mode is intentionally disabled until the non-iterative engine is accepted"
+    )
+
+
+def _v2_node_payload(results: dict[str, Any]) -> dict[str, Any]:
+    return {
+        name: {
+            "local_weights": result.local_weights,
+            "terminal_weights": result.terminal_weights,
+            "audit": asdict(result.audit),
+        }
+        for name, result in results.items()
+    }
+
+
+def _v2_estimate_payload(config: dict[str, Any]) -> dict[str, Any]:
+    model, dataset = _v2_inputs(config)
+    backtest = config["backtest"]
+    estimation_frequency = str(backtest.get("estimation_frequency") or "W")
+    estimation = _resample_simple_returns(dataset.returns, estimation_frequency)
+    train_size = int(backtest.get("train_size") or 104)
+    train = estimation.tail(train_size)
+    if len(train) < train_size:
+        raise StudioConfigError("not enough observations for the V2 estimation window")
+    mode = _v2_mode(config)
+    estimate = HierarchicalV2Estimator().estimate(
+        model,
+        train,
+        mode=mode,
+        periods_per_year=_annualization_factor(estimation_frequency),
+    )
+    return {
+        "ok": True,
+        "engine": "hierarchical-v2",
+        "mode": mode,
+        "reference_policy": "immutable_raw",
+        "metadata": {
+            **dataset.metadata,
+            "estimation_start": train.index.min(),
+            "estimation_end": train.index.max(),
+            "estimation_observations": len(train),
+        },
+        "terminal_weights": estimate.terminal_weights,
+        "synthetic_benchmark_weights": estimate.synthetic_benchmark_weights,
+        "nodes": _v2_node_payload(estimate.node_results),
+        "forward_nodes": _v2_node_payload(estimate.forward_node_results),
+    }
+
+
+def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
+    model, dataset = _v2_inputs(config)
+    backtest = config["backtest"]
+    mode = _v2_mode(config)
+    report = HierarchicalV2Backtester().run(
+        model,
+        dataset.returns,
+        mode=mode,
+        train_size=int(backtest.get("train_size") or 104),
+        estimation_frequency=str(backtest.get("estimation_frequency") or "W"),
+        rebalance_frequency=str(backtest.get("rebalance_frequency") or "M"),
+        transaction_cost_bps=float(backtest.get("transaction_cost_bps") or 0),
+        include_partial_last_period=bool(backtest.get("include_partial_last_period", False)),
+    )
+    curves = {name: _chart_curve(series) for name, series in report.curves.items()}
+    return {
+        "ok": True,
+        "engine": "hierarchical-v2",
+        "report": {
+            "mode": mode,
+            "reference_policy": "immutable_raw",
+            "n_folds": len(report.folds),
+            "oos_start": report.curves["FINAL"].index.min(),
+            "oos_end": report.curves["FINAL"].index.max(),
+            "metrics": report.metrics,
+            "curves": curves,
+            "folds": report.folds,
+            "transaction_cost_paid": report.transaction_cost_paid,
+            "node_names": [node.name for node in model.root.walk()],
+            "father_arms": {
+                node.name: f"FATHER:{node.name}"
+                for node in model.root.walk()
+                if node.proxy is not None
+            },
+        },
+    }
+
+
+def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, str]]:
+    model, dataset = _v2_inputs(config)
+    backtest = config["backtest"]
+    mode = _v2_mode(config)
+    estimation_frequency = str(backtest.get("estimation_frequency") or "W")
+    train_size = int(backtest.get("train_size") or 104)
+    estimation = _resample_simple_returns(dataset.returns, estimation_frequency)
+    train = estimation.tail(train_size)
+    if len(train) < train_size:
+        raise StudioConfigError("not enough observations for the V2 export estimation window")
+    estimate = HierarchicalV2Estimator().estimate(
+        model,
+        train,
+        mode=mode,
+        periods_per_year=_annualization_factor(estimation_frequency),
+    )
+    report = HierarchicalV2Backtester().run(
+        model,
+        dataset.returns,
+        mode=mode,
+        train_size=train_size,
+        estimation_frequency=estimation_frequency,
+        rebalance_frequency=str(backtest.get("rebalance_frequency") or "M"),
+        transaction_cost_bps=float(backtest.get("transaction_cost_bps") or 0),
+        include_partial_last_period=bool(backtest.get("include_partial_last_period", False)),
+        capture_audit_series=True,
+    )
+    root = next(node for node in config["nodes"] if str(node["id"]) == str(config["root_id"]))
+    stem = _MODEL_NAME.sub("-", str(root.get("name") or "hierarchical-model")).strip(" .-")
+    stem = stem or "hierarchical-model"
+    scientific_study = _scientific_study_result(config, model, dataset, mode)
+    audit = build_audit_bundle(
+        config=config,
+        data_metadata=dataset.metadata,
+        daily_returns=dataset.returns,
+        estimate=estimate,
+        report=report,
+        scientific_study=scientific_study,
+    )
+    client = build_client_report(
+        config=config,
+        data_metadata=dataset.metadata,
+        estimate=estimate,
+        report=report,
+        scientific_study=scientific_study,
+    )
+    return {
+        "audit": (audit, "application/zip", f"{stem}-v2-audit.zip"),
+        "report": (client, "text/html; charset=utf-8", f"{stem}-v2-report.html"),
+    }
+
+
+def _as_json(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if is_dataclass(value):
+        return _as_json(asdict(value))
+    if hasattr(value, "to_dict"):
+        return {str(k): _as_json(v) for k, v in value.to_dict().items()}
+    if isinstance(value, dict):
+        return {str(k): _as_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_as_json(v) for v in value]
+    return value
+
+
+def _chart_curve(series: Any, *, max_points: int = 600) -> list[dict[str, float | str]]:
+    """Compress daily simple returns without changing the compounded curve."""
+    if series.empty:
+        return []
+    step = max(1, -(-len(series) // max_points))
+    points: list[dict[str, float | str]] = []
+    for start in range(0, len(series), step):
+        chunk = series.iloc[start : start + step]
+        points.append(
+            {
+                "date": str(chunk.index[-1].date()),
+                "return": float((1.0 + chunk).prod() - 1.0),
+            }
+        )
+    return points
+
+
+def _v2_validation_payload(config: dict[str, Any]) -> dict[str, Any]:
+    """Build the V2 model to report required instruments and a forward-mode check."""
+    try:
+        model = V2Model.from_config(config)
+    except (KeyError, TypeError, ValueError) as exc:
+        return {
+            "ok": True,
+            "warnings": [],
+            "instruments": [],
+            "nested_v0": {
+                "eligible": False,
+                "reason": str(exc),
+                "requirements": [
+                    "a root node and at least one child",
+                    "every child node needs a proxy ticker",
+                    "the backtest benchmark weights must be declared",
+                ],
+            },
+        }
+    instruments = list(
+        dict.fromkeys(
+            [
+                *model.root.terminal_instruments(),
+                *(node.proxy for node in model.root.walk() if node.proxy),
+                *model.benchmark.weights,
+            ]
+        )
+    )
+    children = model.root.children
+    return {
+        "ok": True,
+        "warnings": [],
+        "instruments": instruments,
+        "nested_v0": {
+            "eligible": bool(children),
+            "reason": (
+                "Configurazione valida per Forward."
+                if children
+                else "Il nodo root non ha nodi figli da espandere in Forward."
+            ),
+            "requirements": [],
+            "level_0_components": model.root.instruments,
+            "sleeves": [
+                {
+                    "node": child.name,
+                    "proxy": child.proxy,
+                    "instruments": child.instruments,
+                    "terminal_instruments": child.terminal_instruments(),
+                }
+                for child in children
+            ],
+        },
+    }
+
+
+def sample_config() -> dict[str, Any]:
+    return {
+        "root_id": "root",
+        "nodes": [
+            {
+                "id": "root",
+                "name": "Global allocation",
+                "children": ["equity", "bonds"],
+                "instruments": [],
+                "proxy": "",
+                "goal": {"objective": "min_risk"},
+                "constraints": {},
+            },
+            {
+                "id": "equity",
+                "name": "Equity",
+                "children": [],
+                "instruments": ["SPY", "VGK", "EWJ"],
+                "proxy": "ACWI",
+                "goal": {"objective": "min_risk"},
+                "constraints": {},
+            },
+            {
+                "id": "bonds",
+                "name": "Bonds",
+                "children": [],
+                "instruments": ["SHY", "IEF", "TLT"],
+                "proxy": "AGG",
+                "goal": {"objective": "min_risk"},
+                "constraints": {},
+            },
+        ],
+        "data": {"start": "2018-01-01", "end": ""},
+        "backtest": {
+            "id": "tree-studio",
+            "train_size": 104,
+            "rebalance_frequency": "M",
+            "estimation_frequency": "W",
+            "transaction_cost_bps": "5",
+            "forward_enabled": True,
+            "hierarchy_mode": "proxy",
+            "benchmark": {"id": "B0", "name": "Global 70/30", "weights": {"ACWI": "0.7", "AGG": "0.3"}},
+        },
+    }
+
+
+def minimal_sample_config() -> dict[str, Any]:
+    """A smaller, two-node configuration for a quick first run."""
+    return {
+        "root_id": "root",
+        "nodes": [
+            {
+                "id": "root",
+                "name": "70/30 global",
+                "children": ["equity"],
+                "instruments": ["AGG"],
+                "proxy": "",
+                "goal": {"objective": "min_risk"},
+                "constraints": {},
+            },
+            {
+                "id": "equity",
+                "name": "Equity sleeve",
+                "children": [],
+                "instruments": ["SPY", "VGK", "VWO"],
+                "proxy": "ACWI",
+                "goal": {"objective": "min_risk"},
+                "constraints": {},
+            },
+        ],
+        "data": {"start": "2015-01-01", "end": ""},
+        "backtest": {
+            "id": "tree-studio-minimal",
+            "train_size": 104,
+            "rebalance_frequency": "M",
+            "estimation_frequency": "W",
+            "transaction_cost_bps": "5",
+            "forward_enabled": True,
+            "hierarchy_mode": "proxy",
+            "benchmark": {"id": "B0", "name": "ACWI / AGG 70/30", "weights": {"ACWI": "0.7", "AGG": "0.3"}},
+        },
+    }
+
+
+def instrument_catalog(
+    query: str,
+    *,
+    limit: int = 30,
+    min_observations: int = 0,
+    start_before: str = "",
+) -> list[dict[str, Any]]:
+    """Read active listings from Market Data Hub's identity tables.
+
+    This is intentionally a read-only lookup. The editor receives only the
+    metadata needed to choose an instrument, never a copied static universe.
+    """
+    text = query.strip()
+    minimum = max(0, int(min_observations))
+    cutoff = start_before.strip()
+    if len(text) < 2 and not minimum and not cutoff:
+        return []
+    bounded_limit = max(1, min(int(limit), 100))
+    pattern = f"%{text.upper()}%"
+    try:
+        from market_data_hub.db.connection import get_conn
+
+        con = get_conn(read_only=True)
+        try:
+            rows = con.execute(
+                """
+                SELECT l.symbol, coalesce(i.name, ''), coalesce(i.kind, ''),
+                       coalesce(l.exchange, ''), coalesce(l.currency, ''),
+                       coalesce(c.asset_class, ''), coalesce(c.area, ''),
+                       coalesce(c.category, ''), coalesce(c.sub_group, ''),
+                       coalesce(c.sector, ''), coalesce(c.theme, ''),
+                       coalesce(c.benchmark_proxy, ''), c.priority,
+                       coalesce(p.observations, 0), p.start_date, p.end_date
+                FROM listings l
+                JOIN instruments i USING (instrument_id)
+                LEFT JOIN etf_classification c ON upper(c.symbol) = upper(l.symbol)
+                LEFT JOIN (
+                    SELECT listing_id, count(*) AS observations,
+                           min(date) AS start_date, max(date) AS end_date
+                    FROM prices_daily
+                    GROUP BY listing_id
+                ) p USING (listing_id)
+                WHERE l.active_to IS NULL
+                  AND coalesce(p.observations, 0) >= ?
+                  AND (? = '' OR p.start_date <= CAST(? AS DATE))
+                  AND (
+                      upper(l.symbol) LIKE ? OR upper(coalesce(i.name, '')) LIKE ?
+                      OR upper(coalesce(c.asset_class, '')) LIKE ?
+                      OR upper(coalesce(c.area, '')) LIKE ?
+                      OR upper(coalesce(c.category, '')) LIKE ?
+                      OR upper(coalesce(c.sub_group, '')) LIKE ?
+                      OR upper(coalesce(c.sector, '')) LIKE ?
+                      OR upper(coalesce(c.theme, '')) LIKE ?
+                  )
+                ORDER BY CASE WHEN upper(l.symbol) = ? THEN 0 ELSE 1 END,
+                         l.symbol, l.exchange
+                LIMIT ?
+                """,
+                [minimum, cutoff, cutoff,
+                 pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern,
+                 text.upper(), bounded_limit],
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception as exc:
+        raise StudioConfigError(f"Market Data Hub catalog is unavailable: {type(exc).__name__}: {exc}") from exc
+    return [
+        {
+            "symbol": str(symbol), "name": str(name), "kind": str(kind),
+            "exchange": str(exchange), "currency": str(currency),
+            "asset_class": str(asset_class), "area": str(area),
+            "category": str(category), "sub_group": str(sub_group),
+            "sector": str(sector), "theme": str(theme),
+            "benchmark_proxy": str(benchmark_proxy), "priority": priority,
+            "observations": int(observations or 0),
+            "start_date": str(start_date or ""), "end_date": str(end_date or ""),
+        }
+        for (symbol, name, kind, exchange, currency, asset_class, area, category,
+             sub_group, sector, theme, benchmark_proxy, priority, observations,
+             start_date, end_date) in rows
+    ]
+
+
+def instrument_labels(symbols: list[str]) -> list[dict[str, str]]:
+    """Return display names for a bounded set of visible tree tickers."""
+    normalized = list(dict.fromkeys(
+        symbol.split(":", 1)[-1].strip().upper()
+        for symbol in symbols
+        if symbol and _TICKER.fullmatch(symbol.split(":", 1)[-1].strip())
+    ))[:200]
+    if not normalized:
+        return []
+    placeholders = ", ".join("?" for _ in normalized)
+    try:
+        from market_data_hub.db.connection import get_conn
+
+        con = get_conn(read_only=True)
+        try:
+            rows = con.execute(
+                f"""
+                SELECT l.symbol, coalesce(i.name, '')
+                FROM listings l JOIN instruments i USING (instrument_id)
+                WHERE l.active_to IS NULL AND upper(l.symbol) IN ({placeholders})
+                ORDER BY l.symbol
+                """,
+                normalized,
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception as exc:
+        raise StudioConfigError(f"Market Data Hub labels are unavailable: {type(exc).__name__}: {exc}") from exc
+    return [{"symbol": str(symbol), "name": str(name)} for symbol, name in rows]
+
+
+class StudioHandler(BaseHTTPRequestHandler):
+    server_version = "LazyPortfolioTreeStudio/0.1"
+    _run_cache: dict[str, dict[str, Any]] = {}
+    _cache_lock = Lock()
+    _cache_limit = 32
+    _artifact_cache: dict[str, dict[str, tuple[bytes, str, str]]] = {}
+    _artifact_cache_limit = 4
+
+    @staticmethod
+    def _cache_key(path: str, config: dict[str, Any]) -> str:
+        canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=_as_json)
+        return f"{path}:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/api/sample":
+            self._json(HTTPStatus.OK, sample_config())
+            return
+        if path == "/api/sample/nested-v0":
+            self._json(HTTPStatus.OK, minimal_sample_config())
+            return
+        if path == "/api/models":
+            self._json(HTTPStatus.OK, {"ok": True, "directory": str(MODEL_DIR), "items": _saved_models()})
+            return
+        if path.startswith("/api/models/"):
+            filename = Path(unquote(path.removeprefix("/api/models/"))).name
+            model_path = MODEL_DIR / filename
+            if not filename.endswith(".json") or not model_path.is_file():
+                self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Model not found"})
+                return
+            try:
+                self._json(HTTPStatus.OK, json.loads(model_path.read_text(encoding="utf-8")))
+            except json.JSONDecodeError:
+                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "Invalid model JSON"})
+            return
+        if path == "/api/instrument-catalog":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            min_observations = parse_qs(parsed.query).get("min_observations", ["0"])[0]
+            start_before = parse_qs(parsed.query).get("start_before", [""])[0]
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "items": instrument_catalog(
+                    query,
+                    min_observations=int(min_observations or 0),
+                    start_before=start_before,
+                ),
+            })
+            return
+        if path == "/api/instrument-labels":
+            symbols = parse_qs(parsed.query).get("symbols", [""])[0].split(",")
+            self._json(HTTPStatus.OK, {"ok": True, "items": instrument_labels(symbols)})
+            return
+        if path in {"/", "/index.html"}:
+            self._file(INDEX_FILE)
+            return
+        self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+
+    def do_POST(self) -> None:  # noqa: N802
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 2_000_000:
+                raise StudioConfigError("request is too large")
+            path = urlparse(self.path).path
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise StudioConfigError("configuration must be an object")
+            if path == "/api/models":
+                name = payload.get("name")
+                config = payload.get("config")
+                if not isinstance(config, dict):
+                    raise StudioConfigError("model config must be an object")
+                V2Model.from_config(config)
+                model_path = _model_path(name)
+                MODEL_DIR.mkdir(parents=True, exist_ok=True)
+                model_path.write_text(json.dumps(config, indent=2, default=_as_json) + "\n", encoding="utf-8")
+                self._json(HTTPStatus.OK, {"ok": True, "name": model_path.stem, "path": str(model_path)})
+                return
+            if path == "/api/cache/clear":
+                with self._cache_lock:
+                    cleared = len(self._run_cache) + len(self._artifact_cache)
+                    self._run_cache.clear()
+                    self._artifact_cache.clear()
+                self._json(HTTPStatus.OK, {"ok": True, "cleared": cleared})
+                return
+            config = payload
+            if path == "/api/validate":
+                self._json(HTTPStatus.OK, _v2_validation_payload(config))
+            elif path in {"/api/v2/estimate", "/api/v2/backtest", "/api/v2/scientific-study"}:
+                key = self._cache_key(path, config)
+                with self._cache_lock:
+                    cached = self._run_cache.get(key)
+                if cached is not None:
+                    self._json(HTTPStatus.OK, {**cached, "cached": True})
+                    return
+                producer = {
+                    "/api/v2/estimate": _v2_estimate_payload,
+                    "/api/v2/backtest": _v2_backtest_payload,
+                    "/api/v2/scientific-study": _v2_scientific_study_payload,
+                }[path]
+                payload = _as_json(producer(config))
+                with self._cache_lock:
+                    if len(self._run_cache) >= self._cache_limit and key not in self._run_cache:
+                        self._run_cache.pop(next(iter(self._run_cache)))
+                    self._run_cache[key] = payload
+                self._json(HTTPStatus.OK, {**payload, "cached": False})
+            elif path in {"/api/v2/audit-bundle", "/api/v2/client-report"}:
+                kind = "audit" if path.endswith("audit-bundle") else "report"
+                key = self._cache_key("/api/v2/artifacts", config)
+                with self._cache_lock:
+                    artifacts = self._artifact_cache.get(key)
+                if artifacts is None:
+                    artifacts = _v2_export_artifacts(config)
+                    with self._cache_lock:
+                        if len(self._artifact_cache) >= self._artifact_cache_limit:
+                            self._artifact_cache.pop(next(iter(self._artifact_cache)))
+                        self._artifact_cache[key] = artifacts
+                body, content_type, filename = artifacts[kind]
+                self._binary(HTTPStatus.OK, body, content_type, filename)
+            else:
+                self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+        except (StudioConfigError, V2OptimizationError, ValueError) as exc:
+            self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+        except Exception as exc:  # Keep tracebacks in the console, not in the browser.
+            print(f"[tree-studio] {type(exc).__name__}: {exc}", file=sys.stderr)
+            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+    def _file(self, path: Path) -> None:
+        body = path.read_bytes()
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"{mime}; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload, default=_as_json).encode("utf-8")
+        compressed = len(body) >= 64_000 and "gzip" in self.headers.get("Accept-Encoding", "").lower()
+        if compressed:
+            body = gzip.compress(body)
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _binary(
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        content_type: str,
+        filename: str,
+    ) -> None:
+        safe_filename = re.sub(r"[^A-Za-z0-9._-]+", "-", filename)
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        view = memoryview(body)
+        for offset in range(0, len(view), 64 * 1024):
+            self.wfile.write(view[offset : offset + 64 * 1024])
+        self.wfile.flush()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        print(f"[tree-studio] {format % args}")
+
+
+def main() -> None:
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), StudioHandler)
+    print(f"LazyPortfolio Tree Studio running at http://127.0.0.1:{port}")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nTree Studio stopped.")
+
+
+if __name__ == "__main__":
+    main()
