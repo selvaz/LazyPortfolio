@@ -38,7 +38,7 @@ def _as_json(value: Any) -> Any:
         return float(value)
     if isinstance(value, (datetime, date)):
         return value.isoformat()
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return _as_json(asdict(value))
     if hasattr(value, "to_dict"):
         return {str(k): _as_json(v) for k, v in value.to_dict().items()}
@@ -86,10 +86,8 @@ def list_saved_models(*, store_dir: str | os.PathLike[str] | None = None) -> lis
     directory = resolve_models_dir(store_dir)
     if not directory.exists():
         return []
-    return [
-        {"name": path.stem, "file": path.name}
-        for path in sorted(directory.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
-    ]
+    paths = sorted(directory.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    return [{"name": path.stem, "file": path.name} for path in paths]
 
 
 def read_model(name: Any, *, store_dir: str | os.PathLike[str] | None = None) -> dict[str, Any]:
@@ -97,7 +95,8 @@ def read_model(name: Any, *, store_dir: str | os.PathLike[str] | None = None) ->
     path = model_path(name, store_dir=store_dir)
     if not path.is_file():
         raise FileNotFoundError(f"no saved model named {sanitize_model_name(name)!r}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    loaded: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return loaded
 
 
 def write_model(

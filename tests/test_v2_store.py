@@ -7,8 +7,6 @@ other -- these tests pin the contract that makes that true.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from lazyportfolio.v2.store import (
@@ -98,7 +96,8 @@ def test_write_then_list_then_read_round_trips(tmp_path) -> None:
     config = _minimal_config()
     path = write_model("First Tree", config, store_dir=tmp_path)
     assert path == tmp_path / "First Tree.json"
-    assert list_saved_models(store_dir=tmp_path) == [{"name": "First Tree", "file": "First Tree.json"}]
+    expected = [{"name": "First Tree", "file": "First Tree.json"}]
+    assert list_saved_models(store_dir=tmp_path) == expected
     assert read_model("First Tree", store_dir=tmp_path) == config
 
 

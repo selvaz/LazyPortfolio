@@ -23,7 +23,8 @@ def mode_from_config(config: dict[str, Any]) -> Mode:
     ``"synthetic_reconstructed"`` -> ``forward_backward``. Any other value is a
     reserved, not-yet-implemented iterative mode and is rejected outright.
     """
-    backtest = config.get("backtest") if isinstance(config.get("backtest"), dict) else {}
+    backtest_raw = config.get("backtest")
+    backtest = backtest_raw if isinstance(backtest_raw, dict) else {}
     if not bool(backtest.get("forward_enabled", True)):
         return "flat"
     hierarchy_mode = str(backtest.get("hierarchy_mode") or "proxy")

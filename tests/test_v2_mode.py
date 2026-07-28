@@ -16,7 +16,8 @@ def _config(**backtest_overrides: object) -> dict[str, object]:
 
 def test_forward_disabled_is_flat_regardless_of_hierarchy_mode() -> None:
     assert mode_from_config(_config(forward_enabled=False)) == "flat"
-    assert mode_from_config(_config(forward_enabled=False, hierarchy_mode="synthetic_reconstructed")) == "flat"
+    reconstructed = _config(forward_enabled=False, hierarchy_mode="synthetic_reconstructed")
+    assert mode_from_config(reconstructed) == "flat"
 
 
 def test_proxy_hierarchy_mode_is_forward() -> None:

@@ -54,18 +54,21 @@ def test_model_path_resolves_under_the_shared_env_directory(tree_studio, tmp_pat
     assert tree_studio._model_path("a tree").parent == tmp_path.resolve()
 
 
-def test_saved_models_reflects_a_file_written_through_the_shared_store(tree_studio, tmp_path) -> None:
+def test_saved_models_reflects_a_file_written_through_the_store(tree_studio, tmp_path) -> None:
     from lazyportfolio.v2.store import write_model
 
     write_model("from-the-store", _config(), store_dir=tmp_path)
-    assert tree_studio._saved_models() == [{"name": "from-the-store", "file": "from-the-store.json"}]
+    expected = [{"name": "from-the-store", "file": "from-the-store.json"}]
+    assert tree_studio._saved_models() == expected
 
 
 def test_v2_mode_delegates_to_mode_from_config(tree_studio) -> None:
     assert tree_studio._v2_mode({"backtest": {"forward_enabled": False}}) == "flat"
-    assert tree_studio._v2_mode({"backtest": {"forward_enabled": True, "hierarchy_mode": "proxy"}}) == "forward"
+    forward_config = {"backtest": {"forward_enabled": True, "hierarchy_mode": "proxy"}}
+    assert tree_studio._v2_mode(forward_config) == "forward"
 
 
 def test_v2_mode_reraises_as_studio_config_error(tree_studio) -> None:
-    with pytest.raises(tree_studio.StudioConfigError, match="iterative mode is intentionally disabled"):
+    reason = "iterative mode is intentionally disabled"
+    with pytest.raises(tree_studio.StudioConfigError, match=reason):
         tree_studio._v2_mode({"backtest": {"hierarchy_mode": "current_root_synthetic"}})
