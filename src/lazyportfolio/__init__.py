@@ -32,6 +32,17 @@ from lazyportfolio.scientific_study import (
     paired_block_bootstrap,
     run_scientific_study,
 )
+from lazyportfolio.v2.mode import mode_from_config
+from lazyportfolio.v2.store import (
+    ModelStoreError,
+    delete_model,
+    list_saved_models,
+    model_path,
+    read_model,
+    resolve_models_dir,
+    sanitize_model_name,
+    write_model,
+)
 
 __all__ = [
     "BacktestSpec",
@@ -40,6 +51,7 @@ __all__ = [
     "HierarchicalV2Backtester",
     "HierarchicalV2Estimator",
     "MarketDataHubOptimizationBackend",
+    "ModelStoreError",
     "OptimizationDataBackend",
     "OptimizationDataset",
     "PairedComparison",
@@ -58,6 +70,14 @@ __all__ = [
     "V2OptimizationError",
     "V2View",
     "baseline_allocations",
+    "delete_model",
+    "list_saved_models",
+    "mode_from_config",
+    "model_path",
     "paired_block_bootstrap",
+    "read_model",
+    "resolve_models_dir",
     "run_scientific_study",
+    "sanitize_model_name",
+    "write_model",
 ]

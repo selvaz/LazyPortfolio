@@ -61,6 +61,19 @@ for testing or a from-scratch integration, not as an alternative production data
 > declared benchmark, sample/shrunk minimum variance and HRP on the same OOS folds with
 > block-bootstrap inference. See [`docs/hierarchical-v2.md`](docs/hierarchical-v2.md) and
 > [`docs/optimizer-remediation-plan.md`](docs/optimizer-remediation-plan.md).
+>
+> **Saved configurations are a shared store, not just a Tree Studio file.**
+> `lazyportfolio.v2.store` resolves one directory — an explicit path, else the
+> `LAZYPORTFOLIO_TREE_MODELS_DIR` env var, else `reports/tree_studio/models/`
+> — that Tree Studio's save/list/load endpoints and any other caller both
+> read and write through. LazyTools' MCP `portfolio_tree_*` tools
+> (`PortfolioTreeTools`) are exactly such a caller: point both processes at
+> the same directory (the env var) and a tree built by one appears in the
+> other immediately, with no export/import step. `lazyportfolio.v2.mode`'s
+> `mode_from_config` is the matching single source of truth for deriving
+> `flat`/`forward`/`forward_backward` from a config's own
+> `backtest.forward_enabled`/`hierarchy_mode`, so the two callers can never
+> estimate the same saved tree differently.
 
 ## Why a separate repo
 
@@ -72,7 +85,7 @@ context, and lets LazyFin's domain layer stay a thin, fast-installing library.
 **Dependency invariant:** `LazyPortfolio → market-data-hub` (the `[datacore]` extra — see "Data
 source" below; `lazyportfolio-setup` always installs it). Never the reverse — LazyPortfolio
 does not depend on LazyFin. Anything that wants both (e.g. LazyTools'
-`PortfolioOptimizationTools`) depends on both packages directly.
+`PortfolioOptimizationTools` and `PortfolioTreeTools`) depends on both packages directly.
 
 ## Layout
 
@@ -93,6 +106,8 @@ src/lazyportfolio/
     solver.py            per-node local optimizer (SLSQP/HRP), rf/funding regimes
     hierarchy.py         Flat/Forward/Forward+Backward traversal across the node tree
     backtest.py          causal walk-forward ledger, costs, financing accrual, metrics
+    mode.py              mode_from_config: forward_enabled/hierarchy_mode -> flat/forward/forward_backward
+    store.py             shared named-config persistence (list/read/write/delete), one directory for every caller
     api.py               stable public assembly point
 project/
   tree_studio.py         local HTTP app (visual editor/runner) over the V2 engine
