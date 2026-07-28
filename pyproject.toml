@@ -27,6 +27,9 @@ datacore = ["market-data-hub @ git+https://github.com/selvaz/market-data-hub.git
 test = ["lazyportfolio[datacore]", "pytest>=8.2", "pytest-asyncio>=0.23", "pytest-cov>=5.0"]
 dev = ["lazyportfolio[test]", "ruff>=0.6", "mypy>=1.10"]
 
+[project.scripts]
+lazyportfolio-setup = "lazyportfolio._setup:main"
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
