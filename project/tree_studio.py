@@ -49,6 +49,10 @@ from lazyportfolio.v2.store import _as_json
 APP_DIR = Path(__file__).resolve().parent
 INDEX_FILE = APP_DIR / "tree_studio.html"
 _TICKER = re.compile(r"^[A-Za-z0-9.\-]+$")
+#: Used only for export filename stems (audit ZIP / client report) below --
+#: model persistence itself goes through lazyportfolio.v2.store, which owns
+#: the equivalent pattern for saved-model names.
+_MODEL_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
 class StudioConfigError(ValueError):
