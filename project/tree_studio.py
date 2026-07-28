@@ -19,9 +19,7 @@ import json
 import mimetypes
 import re
 import sys
-from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
-from decimal import Decimal
+from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -44,11 +42,16 @@ from lazyportfolio.scientific_study import (
     ScientificStudyResult,
     run_scientific_study,
 )
+from lazyportfolio.v2 import store as _store
+from lazyportfolio.v2.mode import mode_from_config as _mode_from_config
+from lazyportfolio.v2.store import _as_json
 
 APP_DIR = Path(__file__).resolve().parent
 INDEX_FILE = APP_DIR / "tree_studio.html"
-MODEL_DIR = APP_DIR.parent / "reports" / "tree_studio" / "models"
 _TICKER = re.compile(r"^[A-Za-z0-9.\-]+$")
+#: Used only for export filename stems (audit ZIP / client report) below --
+#: model persistence itself goes through lazyportfolio.v2.store, which owns
+#: the equivalent pattern for saved-model names.
 _MODEL_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
@@ -57,20 +60,20 @@ class StudioConfigError(ValueError):
 
 
 def _model_path(name: Any) -> Path:
-    """Return the local, Git-ignored path for a named Studio model."""
-    cleaned = _MODEL_NAME.sub("-", str(name).strip()).strip(" .-")
-    if not cleaned:
-        raise StudioConfigError("model name cannot be blank")
-    return MODEL_DIR / f"{cleaned[:120]}.json"
+    """Return the shared, Git-ignored path for a named Studio model.
+
+    Delegates to :mod:`lazyportfolio.v2.store` -- the same store LazyTools'
+    MCP ``portfolio_tree_*`` tools read and write -- so a model saved by
+    either side resolves to the identical file.
+    """
+    try:
+        return _store.model_path(name)
+    except _store.ModelStoreError as exc:
+        raise StudioConfigError(str(exc)) from exc
 
 
 def _saved_models() -> list[dict[str, str]]:
-    if not MODEL_DIR.exists():
-        return []
-    return [
-        {"name": path.stem, "file": path.name}
-        for path in sorted(MODEL_DIR.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
-    ]
+    return _store.list_saved_models()
 
 
 def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
@@ -168,17 +171,13 @@ def _v2_scientific_study_payload(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _v2_mode(config: dict[str, Any]) -> str:
-    backtest = config.get("backtest") if isinstance(config.get("backtest"), dict) else {}
-    if not bool(backtest.get("forward_enabled", True)):
-        return "flat"
-    mode = str(backtest.get("hierarchy_mode") or "proxy")
-    if mode == "proxy":
-        return "forward"
-    if mode == "synthetic_reconstructed":
-        return "forward_backward"
-    raise StudioConfigError(
-        "V2 iterative mode is intentionally disabled until the non-iterative engine is accepted"
-    )
+    """Thin wrapper: derivation itself lives in ``lazyportfolio.v2.mode`` so
+    Tree Studio and any other caller (LazyTools' MCP ``portfolio_tree_*``
+    tools) can never compute a different mode for the same config."""
+    try:
+        return _mode_from_config(config)
+    except ValueError as exc:
+        raise StudioConfigError(str(exc)) from exc
 
 
 def _v2_node_payload(results: dict[str, Any]) -> dict[str, Any]:
@@ -314,22 +313,6 @@ def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, 
         "audit": (audit, "application/zip", f"{stem}-v2-audit.zip"),
         "report": (client, "text/html; charset=utf-8", f"{stem}-v2-report.html"),
     }
-
-
-def _as_json(value: Any) -> Any:
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if is_dataclass(value):
-        return _as_json(asdict(value))
-    if hasattr(value, "to_dict"):
-        return {str(k): _as_json(v) for k, v in value.to_dict().items()}
-    if isinstance(value, dict):
-        return {str(k): _as_json(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_as_json(v) for v in value]
-    return value
 
 
 def _chart_curve(series: Any, *, max_points: int = 600) -> list[dict[str, float | str]]:
@@ -625,11 +608,14 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, minimal_sample_config())
             return
         if path == "/api/models":
-            self._json(HTTPStatus.OK, {"ok": True, "directory": str(MODEL_DIR), "items": _saved_models()})
+            self._json(
+                HTTPStatus.OK,
+                {"ok": True, "directory": str(_store.resolve_models_dir()), "items": _saved_models()},
+            )
             return
         if path.startswith("/api/models/"):
             filename = Path(unquote(path.removeprefix("/api/models/"))).name
-            model_path = MODEL_DIR / filename
+            model_path = _store.resolve_models_dir() / filename
             if not filename.endswith(".json") or not model_path.is_file():
                 self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Model not found"})
                 return
@@ -674,10 +660,10 @@ class StudioHandler(BaseHTTPRequestHandler):
                 config = payload.get("config")
                 if not isinstance(config, dict):
                     raise StudioConfigError("model config must be an object")
-                V2Model.from_config(config)
-                model_path = _model_path(name)
-                MODEL_DIR.mkdir(parents=True, exist_ok=True)
-                model_path.write_text(json.dumps(config, indent=2, default=_as_json) + "\n", encoding="utf-8")
+                try:
+                    model_path = _store.write_model(name, config)
+                except _store.ModelStoreError as exc:
+                    raise StudioConfigError(str(exc)) from exc
                 self._json(HTTPStatus.OK, {"ok": True, "name": model_path.stem, "path": str(model_path)})
                 return
             if path == "/api/cache/clear":
@@ -724,6 +710,25 @@ class StudioHandler(BaseHTTPRequestHandler):
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
         except (StudioConfigError, V2OptimizationError, ValueError) as exc:
+            self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+        except Exception as exc:  # Keep tracebacks in the console, not in the browser.
+            print(f"[tree-studio] {type(exc).__name__}: {exc}", file=sys.stderr)
+            self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        try:
+            path = urlparse(self.path).path
+            if not path.startswith("/api/models/"):
+                self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+                return
+            name = unquote(path.removeprefix("/api/models/")).removesuffix(".json")
+            try:
+                deleted = _store.delete_model(name)
+            except FileNotFoundError as exc:
+                self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})
+                return
+            self._json(HTTPStatus.OK, {"ok": True, "name": deleted.stem})
+        except (StudioConfigError, _store.ModelStoreError, ValueError) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
         except Exception as exc:  # Keep tracebacks in the console, not in the browser.
             print(f"[tree-studio] {type(exc).__name__}: {exc}", file=sys.stderr)
