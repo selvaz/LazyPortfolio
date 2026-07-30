@@ -67,6 +67,42 @@ def _extra_requirements(extra: str, seen: set[str] | None = None) -> list[str]:
     return reqs
 
 
+def _install_market_data_hub(sibling_hub: Path | None) -> None:
+    """Install market-data-hub: editable from a local sibling checkout if one
+    exists, otherwise the SAME pinned revision declared by the ``datacore``
+    extra (read from this package's own installed metadata) -- never a bare
+    unpinned URL, which would silently install whatever's on market-data-hub's
+    default branch, diverging from the tested pin.
+
+    Fails loudly (RuntimeError) if the ``datacore`` extra is ever missing from
+    installed metadata, rather than silently falling back to an unpinned
+    install: reproducibility is the whole point of reading the pin from
+    metadata in the first place. This should never happen for a normally-
+    installed lazyportfolio.
+    """
+    if sibling_hub is not None:
+        _pip("install", "-e", str(sibling_hub))
+        return
+
+    pinned_specs = _extra_requirements("datacore")
+    if not pinned_specs:
+        raise RuntimeError(
+            "'datacore' extra not found in this package's installed metadata -- "
+            "cannot determine the pinned market-data-hub revision. This should "
+            "never happen for a normally-installed lazyportfolio; reinstall the "
+            "package or report this as a bug."
+        )
+    _pip("install", *pinned_specs)
+    print(
+        f"\nNo local market-data-hub checkout found. Installed the pinned "
+        f"revision declared by the datacore extra ({pinned_specs[0]}). "
+        "That's fine for using the package, but you'll need a populated "
+        ".duckdb database (see below) and won't get market-data-hub's own "
+        f"ingestion/scheduling scripts. Clone {MARKET_DATA_HUB_GIT_URL} and "
+        "run its own setup for the full data pipeline."
+    )
+
+
 def _install_extras(extras: list[str]) -> None:
     specs: list[str] = []
     for extra in extras:
@@ -168,16 +204,7 @@ def main(argv: list[str] | None = None) -> int:
             sibling_hub = candidate
 
     print("\n==> Installing market-data-hub")
-    if sibling_hub is not None:
-        _pip("install", "-e", str(sibling_hub))
-    else:
-        _pip("install", f"market-data-hub @ git+{MARKET_DATA_HUB_GIT_URL}")
-        print(
-            "\nNo local market-data-hub checkout found. That's fine for using the "
-            "package, but you'll need a populated .duckdb database (see below) and "
-            "won't get market-data-hub's own ingestion/scheduling scripts. Clone "
-            f"{MARKET_DATA_HUB_GIT_URL} and run its own setup for the full data pipeline."
-        )
+    _install_market_data_hub(sibling_hub)
 
     # --- Genuinely optional pieces.
     extras: list[str] = []
