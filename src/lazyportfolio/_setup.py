@@ -171,12 +171,21 @@ def main(argv: list[str] | None = None) -> int:
     if sibling_hub is not None:
         _pip("install", "-e", str(sibling_hub))
     else:
-        _pip("install", f"market-data-hub @ git+{MARKET_DATA_HUB_GIT_URL}")
+        # Install the SAME pinned revision declared by the datacore extra
+        # (read from this package's own installed metadata), not a bare
+        # unpinned URL -- that would silently install whatever's on
+        # market-data-hub's default branch, diverging from the tested pin.
+        pinned_specs = _extra_requirements("datacore")
+        if not pinned_specs:  # pragma: no cover - only if the extra is ever removed
+            pinned_specs = [f"market-data-hub @ git+{MARKET_DATA_HUB_GIT_URL}"]
+        _pip("install", *pinned_specs)
         print(
-            "\nNo local market-data-hub checkout found. That's fine for using the "
-            "package, but you'll need a populated .duckdb database (see below) and "
-            "won't get market-data-hub's own ingestion/scheduling scripts. Clone "
-            f"{MARKET_DATA_HUB_GIT_URL} and run its own setup for the full data pipeline."
+            f"\nNo local market-data-hub checkout found. Installed the pinned "
+            f"revision declared by the datacore extra ({pinned_specs[0]}). "
+            "That's fine for using the package, but you'll need a populated "
+            ".duckdb database (see below) and won't get market-data-hub's own "
+            f"ingestion/scheduling scripts. Clone {MARKET_DATA_HUB_GIT_URL} and "
+            "run its own setup for the full data pipeline."
         )
 
     # --- Genuinely optional pieces.

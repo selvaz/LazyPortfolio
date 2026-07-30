@@ -23,7 +23,7 @@ dependencies = [
 # lazyportfolio.backend imports it lazily inside load_returns(), so the
 # package stays installable/testable with any OptimizationDataBackend,
 # including one that doesn't touch market-data-hub at all.
-datacore = ["market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@0eb286e4e931c089ae9d4383f5f6f615d9b4d5e4"]
+datacore = ["market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@594928b8eb9aed52c5226b65d6a910c9dfd7a9f2"]
 test = ["lazyportfolio[datacore]", "pytest>=8.2", "pytest-asyncio>=0.23", "pytest-cov>=5.0"]
 dev = ["lazyportfolio[test]", "ruff>=0.6", "mypy>=1.10"]
 
