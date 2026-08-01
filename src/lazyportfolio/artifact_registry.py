@@ -26,27 +26,26 @@ registered via ``content_uri``), Tree Studio's client report is never
 written to a file -- it only ever exists as an in-memory/disk-cache blob
 (see ``lazyportfolio.v2.run_cache``). So this module registers the report
 with ``content=`` (the actual HTML text), not ``content_uri=``.
+
+Whether ``lazytools`` actually resolves to mypy varies by environment (it
+resolves to concrete types locally, where the sibling LazyTools checkout is
+installed, but CI never installs this optional dependency at all). Either
+way makes the *other* environment flag the fallback assignments below as
+"unused ignore" or "incompatible assignment" -- there is no single
+`# type: ignore` that is simultaneously correct in both, so this file opts
+out of `warn_unused_ignores` instead of chasing the two cases.
 """
+# mypy: warn-unused-ignores=false
 
 from __future__ import annotations
 
 import sys
-from typing import Any
 
-# Declared Any up front so the two branches below type-check identically
-# whether or not lazytools is actually resolvable to mypy in this
-# environment (it resolves to concrete types locally when the sibling
-# LazyTools checkout is installed, but CI never installs this optional
-# dependency at all) -- without this, one of the two branches always ends
-# up with an "unused ignore"/"incompatible assignment" mypy error depending
-# on which environment ran the check.
-resolve_db: Any
-register_artifact: Any
 try:
     from lazytools.registry import register_artifact, resolve_db
 except ImportError:
-    resolve_db = None
-    register_artifact = None
+    resolve_db = None  # type: ignore[assignment]
+    register_artifact = None  # type: ignore[assignment]
 
 
 def register_report_artifact(
