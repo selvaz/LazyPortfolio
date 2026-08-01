@@ -1,0 +1,94 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "Multi-Asset Nested 60-25-15",
+      "children": [
+        "azionario",
+        "obbligazionario",
+        "commodities"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "azionario",
+      "name": "Azionario (60%)",
+      "children": [],
+      "instruments": [
+        "ticker:SPY",
+        "ticker:QQQ",
+        "ticker:EEM",
+        "ticker:GLD"
+      ],
+      "proxy": "ticker:SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0,
+        "max_weight": 1
+      }
+    },
+    {
+      "id": "obbligazionario",
+      "name": "Obbligazionario (25%)",
+      "children": [],
+      "instruments": [
+        "ticker:TLT",
+        "ticker:IEF",
+        "ticker:SHY"
+      ],
+      "proxy": "ticker:TLT",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0,
+        "max_weight": 1
+      }
+    },
+    {
+      "id": "commodities",
+      "name": "Commodities/Real Assets (15%)",
+      "children": [],
+      "instruments": [
+        "ticker:GLD",
+        "ticker:DBC"
+      ],
+      "proxy": "ticker:GLD",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0,
+        "max_weight": 1
+      }
+    }
+  ],
+  "data": {
+    "start": "2020-01-03",
+    "end": "2026-07-31"
+  },
+  "backtest": {
+    "id": "bt_nested_60_25_15",
+    "train_size": 52,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "W",
+    "transaction_cost_bps": 0,
+    "forward_enabled": false,
+    "hierarchy_mode": "flat",
+    "benchmark": {
+      "name": "70/30 SPY/TLT",
+      "weights": {
+        "ticker:SPY": 0.7,
+        "ticker:TLT": 0.3
+      }
+    }
+  }
+}

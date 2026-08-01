@@ -58,7 +58,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -78,7 +81,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -99,7 +105,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -128,7 +137,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -152,7 +164,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -181,7 +196,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -198,7 +216,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -224,7 +245,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -248,7 +272,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -265,7 +292,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -289,7 +319,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -310,7 +343,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"
@@ -332,7 +368,10 @@
         "cash_enabled": true,
         "max_leverage": 1.5,
         "volatility_reference": "father_proxy",
-        "volatility_target_policy": "nearest_feasible"
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "father_proxy"
       },
       "goal": {
         "objective": "max_return"

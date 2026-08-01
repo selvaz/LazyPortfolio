@@ -9,6 +9,7 @@ dist/
 venv/
 .env
 *.sqlite
+*.sqlite3
 *.db
 .pytest_cache/
 .mypy_cache/

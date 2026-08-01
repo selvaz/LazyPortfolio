@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from tree_studio_v2.exports import build_audit_bundle, build_client_report
 
+from lazyportfolio.artifact_registry import register_report_artifact
 from lazyportfolio.backend import MarketDataHubOptimizationBackend, OptimizationDataset
 from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns
 from lazyportfolio.hierarchical_v2 import (
@@ -42,6 +43,7 @@ from lazyportfolio.scientific_study import (
     ScientificStudyResult,
     run_scientific_study,
 )
+from lazyportfolio.v2 import run_cache as _run_cache_store
 from lazyportfolio.v2 import store as _store
 from lazyportfolio.v2.mode import mode_from_config as _mode_from_config
 from lazyportfolio.v2.store import _as_json
@@ -225,7 +227,37 @@ def _v2_estimate_payload(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
+#: Raw (non-JSON) cache for the one canonical walk-forward backtest per
+#: config -- shared by /api/v2/backtest AND the report/audit export path, so
+#: clicking "Report" after "Backtest" reuses the same already-computed
+#: V2BacktestReport instead of re-running the whole walk-forward loop a
+#: second time. In-memory only (pandas Series/dataclasses inside don't round
+#: -trip through JSON), separate from the JSON _run_cache on StudioHandler.
+_raw_backtest_cache: dict[str, tuple[V2Model, OptimizationDataset, Any]] = {}
+_raw_backtest_cache_lock = Lock()
+_RAW_BACKTEST_CACHE_LIMIT = 8
+
+
+def _raw_backtest_key(config: dict[str, Any]) -> str:
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=_as_json)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _run_full_backtest(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset, Any]:
+    """Run (or reuse) THE walk-forward backtest for this config.
+
+    Always captures per-fold audit series -- the extra pandas bookkeeping is
+    cheap next to the solver work the walk-forward loop already does, and it
+    means this single run covers both the plain backtest view and the
+    report/audit export, which need the audit series. Keyed on the exact
+    config (same policy as StudioHandler._cache_key), so any change to the
+    tree invalidates the cache naturally.
+    """
+    key = _raw_backtest_key(config)
+    with _raw_backtest_cache_lock:
+        cached = _raw_backtest_cache.get(key)
+    if cached is not None:
+        return cached
     model, dataset = _v2_inputs(config)
     backtest = config["backtest"]
     mode = _v2_mode(config)
@@ -238,7 +270,19 @@ def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
         rebalance_frequency=str(backtest.get("rebalance_frequency") or "M"),
         transaction_cost_bps=float(backtest.get("transaction_cost_bps") or 0),
         include_partial_last_period=bool(backtest.get("include_partial_last_period", False)),
+        capture_audit_series=True,
     )
+    result = (model, dataset, report)
+    with _raw_backtest_cache_lock:
+        if len(_raw_backtest_cache) >= _RAW_BACKTEST_CACHE_LIMIT and key not in _raw_backtest_cache:
+            _raw_backtest_cache.pop(next(iter(_raw_backtest_cache)))
+        _raw_backtest_cache[key] = result
+    return result
+
+
+def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
+    model, dataset, report = _run_full_backtest(config)
+    mode = _v2_mode(config)
     curves = {name: _chart_curve(series) for name, series in report.curves.items()}
     return {
         "ok": True,
@@ -264,7 +308,7 @@ def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, str]]:
-    model, dataset = _v2_inputs(config)
+    model, dataset, report = _run_full_backtest(config)
     backtest = config["backtest"]
     mode = _v2_mode(config)
     estimation_frequency = str(backtest.get("estimation_frequency") or "W")
@@ -278,17 +322,6 @@ def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, 
         train,
         mode=mode,
         periods_per_year=_annualization_factor(estimation_frequency),
-    )
-    report = HierarchicalV2Backtester().run(
-        model,
-        dataset.returns,
-        mode=mode,
-        train_size=train_size,
-        estimation_frequency=estimation_frequency,
-        rebalance_frequency=str(backtest.get("rebalance_frequency") or "M"),
-        transaction_cost_bps=float(backtest.get("transaction_cost_bps") or 0),
-        include_partial_last_period=bool(backtest.get("include_partial_last_period", False)),
-        capture_audit_series=True,
     )
     root = next(node for node in config["nodes"] if str(node["id"]) == str(config["root_id"]))
     stem = _MODEL_NAME.sub("-", str(root.get("name") or "hierarchical-model")).strip(" .-")
@@ -313,6 +346,41 @@ def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, 
         "audit": (audit, "application/zip", f"{stem}-v2-audit.zip"),
         "report": (client, "text/html; charset=utf-8", f"{stem}-v2-report.html"),
     }
+
+
+def _report_artifact_fields(config: dict[str, Any]) -> tuple[str, str]:
+    """Derive a human-recognizable title/summary for a generated Tree Studio
+    report directly from the tree config.
+
+    There is no session/date concept here -- report generation is on-demand
+    and human-triggered, not a scheduled/dated batch job -- so this uses the
+    root node's name instead (the same lookup ``_v2_export_artifacts`` above
+    already does to derive the export filename stem), plus the tree's node
+    names and instruments for a keyword-dense summary (``search_artifacts``
+    only ever matches title/summary/tags, never the stored HTML content).
+    """
+    nodes = config.get("nodes") if isinstance(config.get("nodes"), list) else []
+    root_id = str(config.get("root_id") or "")
+    root = next((node for node in nodes if str(node.get("id")) == root_id), None)
+    root_name = str((root or {}).get("name") or "hierarchical-model")
+    title = f"Tree Studio report: {root_name}"
+
+    node_names = [str(node.get("name") or node.get("id") or "") for node in nodes if isinstance(node, dict)]
+    instruments: list[str] = []
+    for node in nodes:
+        if isinstance(node, dict):
+            instruments.extend(str(item) for item in (node.get("instruments") or []) if item)
+    backtest = config.get("backtest") if isinstance(config.get("backtest"), dict) else {}
+    benchmark = backtest.get("benchmark") if isinstance(backtest.get("benchmark"), dict) else {}
+    weights = benchmark.get("weights") if isinstance(benchmark.get("weights"), dict) else {}
+    instruments.extend(str(symbol) for symbol in weights)
+    unique_instruments = list(dict.fromkeys(instruments))
+    summary = (
+        f"Tree Studio HTML report for '{root_name}' "
+        f"({len(nodes)} nodes: {', '.join(node_names) or 'n/a'}); "
+        f"instruments: {', '.join(unique_instruments) or 'n/a'}"
+    )
+    return title, summary
 
 
 def _chart_curve(series: Any, *, max_points: int = 600) -> list[dict[str, float | str]]:
@@ -683,6 +751,14 @@ class StudioHandler(BaseHTTPRequestHandler):
                 if cached is not None:
                     self._json(HTTPStatus.OK, {**cached, "cached": True})
                     return
+                disk_cached = _run_cache_store.get_run_result(key)
+                if disk_cached is not None:
+                    with self._cache_lock:
+                        if len(self._run_cache) >= self._cache_limit and key not in self._run_cache:
+                            self._run_cache.pop(next(iter(self._run_cache)))
+                        self._run_cache[key] = disk_cached
+                    self._json(HTTPStatus.OK, {**disk_cached, "cached": True})
+                    return
                 producer = {
                     "/api/v2/estimate": _v2_estimate_payload,
                     "/api/v2/backtest": _v2_backtest_payload,
@@ -693,18 +769,44 @@ class StudioHandler(BaseHTTPRequestHandler):
                     if len(self._run_cache) >= self._cache_limit and key not in self._run_cache:
                         self._run_cache.pop(next(iter(self._run_cache)))
                     self._run_cache[key] = payload
+                _run_cache_store.put_run_result(key, payload)
                 self._json(HTTPStatus.OK, {**payload, "cached": False})
             elif path in {"/api/v2/audit-bundle", "/api/v2/client-report"}:
                 kind = "audit" if path.endswith("audit-bundle") else "report"
                 key = self._cache_key("/api/v2/artifacts", config)
                 with self._cache_lock:
                     artifacts = self._artifact_cache.get(key)
+                if artifacts is None and kind == "report":
+                    disk_report = _run_cache_store.get_report(key)
+                    if disk_report is not None:
+                        body, content_type, filename = disk_report
+                        self._binary(HTTPStatus.OK, body, content_type, filename)
+                        return
                 if artifacts is None:
                     artifacts = _v2_export_artifacts(config)
                     with self._cache_lock:
                         if len(self._artifact_cache) >= self._artifact_cache_limit:
                             self._artifact_cache.pop(next(iter(self._artifact_cache)))
                         self._artifact_cache[key] = artifacts
+                    # Persist only the (small) HTML report -- the audit ZIP is
+                    # multi-MB per entry and deliberately stays in-memory-only,
+                    # see lazyportfolio.v2.run_cache's module docstring.
+                    report_body, report_ct, report_fn = artifacts["report"]
+                    _run_cache_store.put_report(key, report_body, report_ct, report_fn)
+                    # Best-effort catalog entry -- only for the HTML report
+                    # (never the audit ZIP, matching the persistence policy
+                    # just above), and only right here where the report is
+                    # genuinely (re)generated, never on a cache hit -- a
+                    # re-view of an already-cached report must not insert a
+                    # fresh artifact row every time.
+                    if kind == "report":
+                        title, summary = _report_artifact_fields(config)
+                        register_report_artifact(
+                            title=title,
+                            summary=summary,
+                            tags=["tree-studio"],
+                            content=report_body.decode("utf-8"),
+                        )
                 body, content_type, filename = artifacts[kind]
                 self._binary(HTTPStatus.OK, body, content_type, filename)
             else:

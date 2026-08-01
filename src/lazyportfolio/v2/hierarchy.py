@@ -484,19 +484,28 @@ class HierarchicalV2Estimator:
             model.root.constraints.risk_aversion,
             1.0,
         )
-        local, audit = self.optimiser.solve(
-            frame,
-            objective=node.objective,
-            constraints=node.constraints,
-            periods_per_year=periods_per_year,
-            target_reference_series=target_reference,
-            cap_reference_series=cap_reference,
-            tracking_reference_series=tracking_reference,
-            reference_weights=reference_weights,
-            bound_aliases=aliases,
-            risk_aversion=risk_aversion,
-            risk_free_rate=risk_free_rate,
-        )
+        try:
+            local, audit = self.optimiser.solve(
+                frame,
+                objective=node.objective,
+                constraints=node.constraints,
+                periods_per_year=periods_per_year,
+                target_reference_series=target_reference,
+                cap_reference_series=cap_reference,
+                tracking_reference_series=tracking_reference,
+                reference_weights=reference_weights,
+                bound_aliases=aliases,
+                risk_aversion=risk_aversion,
+                risk_free_rate=risk_free_rate,
+            )
+        except V2OptimizationError as exc:
+            raise V2OptimizationError(
+                f"{node.name} ({pass_kind}): {exc} "
+                f"[tracking_error_policy={node.constraints.tracking_error_policy!r}, "
+                f"volatility_target_policy={node.constraints.volatility_target_policy!r}, "
+                f"max_tracking_error={node.constraints.max_tracking_error!r}, "
+                f"objective={node.objective!r}]"
+            ) from exc
         cash_name = next((name for name in CASH_NAMES if name in local), "")
         cash_weight = float(local.get(cash_name, 0.0)) if cash_name else 0.0
         risky_gross = float(

@@ -1,0 +1,77 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "70/30 Azionario + Bond/Commodity",
+      "children": [
+        "eq_sleeve",
+        "fi_sleeve"
+      ],
+      "instruments": [],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "eq_sleeve",
+      "name": "Azionario (70%)",
+      "children": [],
+      "instruments": [
+        "SPY",
+        "QQQ",
+        "EEM"
+      ],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.05,
+        "max_weight": 0.5
+      }
+    },
+    {
+      "id": "fi_sleeve",
+      "name": "Bond+Commodity (30%)",
+      "children": [],
+      "instruments": [
+        "TLT",
+        "GLD"
+      ],
+      "proxy": "TLT",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.05,
+        "max_weight": 0.5
+      }
+    }
+  ],
+  "data": {
+    "start": "2026-05-01",
+    "end": "2026-07-30"
+  },
+  "backtest": {
+    "id": "bkt_7030_vincolato",
+    "train_size": 12,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "W",
+    "transaction_cost_bps": 0,
+    "forward_enabled": false,
+    "hierarchy_mode": "flat",
+    "benchmark": {
+      "name": "70/30 Static",
+      "weights": {
+        "ticker:SPY": 0.25,
+        "ticker:QQQ": 0.2,
+        "ticker:EEM": 0.25,
+        "ticker:TLT": 0.2,
+        "ticker:GLD": 0.1
+      }
+    }
+  }
+}

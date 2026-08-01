@@ -423,71 +423,153 @@ def _node_settings_html(config: dict[str, Any]) -> str:
     return "".join(rows)
 
 
+#: Same 8-color palette the live Tree Studio UI uses for its own SVG line
+#: charts (``lineChart`` in tree_studio.html) -- kept identical here so a
+#: static export looks like the same tool, not a different one.
+_CHART_PALETTE = ["#126782", "#c28416", "#15765b", "#8b4f9c", "#ae3f3f", "#53636c", "#b6534b", "#47826b"]
+_GRID_COLOR = "#e3e9eb"
+_LABEL_COLOR = "#62727c"
+
+
+def _chart_grid_and_labels(
+    *, left: float, plot_width: float, plot_height: float, top: float, low: float, high: float, fmt: Any
+) -> str:
+    """Five horizontal gridlines with value labels, matching lineChart's own grid."""
+    span = max(high - low, 1e-9)
+    parts = []
+    for t in (0.0, 0.25, 0.5, 0.75, 1.0):
+        value = high - t * span
+        y = top + t * plot_height
+        parts.append(
+            f'<line x1="{left}" y1="{y:.2f}" x2="{left + plot_width}" y2="{y:.2f}" '
+            f'stroke="{_GRID_COLOR}" stroke-width="1"/>'
+            f'<text x="{left - 8}" y="{y + 4:.2f}" text-anchor="end" font-size="10" fill="{_LABEL_COLOR}">'
+            f"{fmt(value)}</text>"
+        )
+    return "".join(parts)
+
+
+def _chart_date_labels(*, left: float, plot_width: float, height: float, dates: list[str], n: int) -> str:
+    """Date labels at the start, middle and end tick, matching lineChart's own axis."""
+    if n < 1:
+        return ""
+    positions = sorted({0, (n - 1) // 2, n - 1})
+
+    def xpos(i: int) -> float:
+        return left + i / max(n - 1, 1) * plot_width
+
+    return "".join(
+        f'<text x="{xpos(i):.2f}" y="{height - 12}" text-anchor="middle" font-size="10" fill="{_LABEL_COLOR}">'
+        f"{escape(dates[i])}</text>"
+        for i in positions
+        if i < len(dates)
+    )
+
+
 def _curve_svg(report: Any, arms: list[str]) -> str:
     selected = [arm for arm in arms if arm in report.curves]
     if not selected:
         return ""
-    width, height, left, top = 920, 300, 52, 20
-    plot_width, plot_height = 844, 235
-    wealth = {}
-    for arm in selected:
-        values = (1.0 + report.curves[arm]).cumprod() * 100.0
-        wealth[arm] = values
-    minimum = min(float(values.min()) for values in wealth.values())
-    maximum = max(float(values.max()) for values in wealth.values())
-    span = max(maximum - minimum, 1e-9)
-    colors = ["#126782", "#c28416", "#15765b", "#9b3f4a"]
-    paths = []
-    for index, (_arm, values) in enumerate(wealth.items()):
-        points = []
-        for position, value in enumerate(values):
-            x = left + position * plot_width / max(len(values) - 1, 1)
-            y = top + (maximum - float(value)) * plot_height / span
-            points.append(f"{x:.2f},{y:.2f}")
-        paths.append(
-            f'<polyline points="{" ".join(points)}" fill="none" stroke="{colors[index % len(colors)]}" stroke-width="2"/>'
+    width, height, left, right, top, bottom = 920, 320, 58, 20, 18, 42
+    plot_width, plot_height = width - left - right, height - top - bottom
+    wealth = {arm: (1.0 + report.curves[arm]).cumprod() * 100.0 for arm in selected}
+    n = max(len(values) for values in wealth.values())
+    minimum = min([100.0, *(float(values.min()) for values in wealth.values())])
+    maximum = max([100.0, *(float(values.max()) for values in wealth.values())])
+    pad = max((maximum - minimum) * 0.08, 1.0)
+    low, high = minimum - pad, maximum + pad
+    span = max(high - low, 1e-9)
+
+    def ypos(value: float) -> float:
+        return top + (high - value) / span * plot_height
+
+    def xpos(i: int) -> float:
+        return left + i / max(n - 1, 1) * plot_width
+
+    grid = _chart_grid_and_labels(
+        left=left, plot_width=plot_width, plot_height=plot_height, top=top, low=low, high=high,
+        fmt=lambda v: f"{v:.1f}",
+    )
+    base = ""
+    if low <= 100.0 <= high:
+        y100 = ypos(100.0)
+        base = (
+            f'<line x1="{left}" y1="{y100:.2f}" x2="{left + plot_width}" y2="{y100:.2f}" '
+            f'stroke="#9aaab1" stroke-width="1" stroke-dasharray="4 3"/>'
         )
+    paths = []
+    longest_dates: list[str] = []
+    for index, (_arm, values) in enumerate(wealth.items()):
+        points = [f"{xpos(i):.2f},{ypos(float(v)):.2f}" for i, v in enumerate(values)]
+        paths.append(
+            f'<polyline points="{" ".join(points)}" fill="none" stroke="{_CHART_PALETTE[index % len(_CHART_PALETTE)]}" '
+            f'stroke-width="2.2" vector-effect="non-scaling-stroke"/>'
+        )
+        if len(values) == n:
+            longest_dates = [str(idx.date()) for idx in values.index]
+    date_labels = _chart_date_labels(left=left, plot_width=plot_width, height=height, dates=longest_dates, n=n)
     legend = "".join(
-        f'<span><i style="background:{colors[index % len(colors)]}"></i>{escape(arm)}</span>'
+        f'<span><i style="background:{_CHART_PALETTE[index % len(_CHART_PALETTE)]}"></i>{escape(arm)}</span>'
         for index, arm in enumerate(selected)
     )
     return (
-        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Performance cumulata">'
-        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_height}" class="axis"/>'
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Performance cumulata, base 100">'
+        + grid + base
+        + f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_height}" class="axis"/>'
         f'<line x1="{left}" y1="{top + plot_height}" x2="{left + plot_width}" y2="{top + plot_height}" class="axis"/>'
-        + "".join(paths) + "</svg><div class=\"legend\">" + legend + "</div>"
+        + "".join(paths) + date_labels + "</svg><div class=\"legend\">" + legend + "</div>"
     )
 
 
 def _weight_lines_svg(dates: list[str], series: dict[str, list[float]], *, y_max: float | None = None) -> str:
-    """Line chart of weight fractions over time, one line per instrument."""
+    """Stacked bar chart of weight fractions over time, one bar per rebalance
+    date and one colored segment per instrument -- same layout as the live
+    Tree Studio UI's own ``rebalanceWeightChart``. The axis is a fixed 0-100%
+    scale (not autoscaled to the data): a fully-invested node's bars reach
+    exactly the 100% line, a levered node's bars extend past it (not
+    clipped) -- that overshoot IS the signal, so it must never be hidden by
+    rescaling the axis to fit. ``y_max`` is accepted for call-site
+    compatibility but unused: a stacked total has no independent max to
+    autoscale to, unlike the old per-instrument line chart this replaced.
+    """
     if not series or not dates:
         return ""
-    width, height, left, top = 920, 260, 52, 20
-    plot_width, plot_height = 844, 195
+    width, height, left, right, top, bottom = 860, 250, 42, 16, 16, 44
+    plot_width, plot_height = width - left - right, height - top - bottom
     n = len(dates)
-    resolved_max = max((max(values) if values else 0.0) for values in series.values())
-    resolved_max = max(y_max or resolved_max, resolved_max, 0.01) * 1.08
-    colors = ["#126782", "#c28416", "#15765b", "#9b3f4a", "#6a4c93", "#1f8a70", "#c74e4e", "#4c6a92", "#a37c27", "#3f7f5f", "#7a5230", "#2f6690"]
-    paths = []
-    for index, values in enumerate(series.values()):
-        points = []
-        for position, value in enumerate(values):
-            x = left + position * plot_width / max(n - 1, 1)
-            y = top + (resolved_max - float(value)) * plot_height / resolved_max
-            points.append(f"{x:.2f},{y:.2f}")
-        paths.append(
-            f'<polyline points="{" ".join(points)}" fill="none" stroke="{colors[index % len(colors)]}" stroke-width="1.6"/>'
-        )
+    bar_width = max(2.0, min(18.0, plot_width / n * 0.72))
+    instruments = list(series.keys())
+
+    def xpos(i: int) -> float:
+        return left + (i + 0.5) * plot_width / n
+
+    bars = []
+    for i in range(n):
+        y = top + plot_height
+        for index, instrument in enumerate(instruments):
+            values = series[instrument]
+            weight = float(values[i]) if i < len(values) else 0.0
+            seg_height = max(0.0, weight) * plot_height
+            y -= seg_height
+            if seg_height > 0:
+                bars.append(
+                    f'<rect x="{xpos(i) - bar_width / 2:.2f}" y="{y:.2f}" width="{bar_width:.2f}" '
+                    f'height="{seg_height:.2f}" fill="{_CHART_PALETTE[index % len(_CHART_PALETTE)]}">'
+                    f'<title>{escape(dates[i])} | {escape(instrument)} {weight * 100:.2f}%</title></rect>'
+                )
+    date_labels = _chart_date_labels(left=left, plot_width=plot_width, height=height, dates=dates, n=n)
     legend = "".join(
-        f'<span><i style="background:{colors[index % len(colors)]}"></i>{escape(label)}</span>'
-        for index, label in enumerate(series.keys())
+        f'<span><i style="background:{_CHART_PALETTE[index % len(_CHART_PALETTE)]}"></i>{escape(label)}</span>'
+        for index, label in enumerate(instruments)
     )
     return (
-        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Pesi nel tempo">'
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Pesi ai ribilanciamenti">'
         f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_height}" class="axis"/>'
         f'<line x1="{left}" y1="{top + plot_height}" x2="{left + plot_width}" y2="{top + plot_height}" class="axis"/>'
-        + "".join(paths) + '</svg><div class="legend">' + legend + "</div>"
+        f'<text x="{left - 6}" y="{top + 4}" text-anchor="end" font-size="10" fill="{_LABEL_COLOR}">100%</text>'
+        f'<text x="{left - 6}" y="{top + plot_height + 4}" text-anchor="end" font-size="10" fill="{_LABEL_COLOR}">0%</text>'
+        + "".join(bars) + date_labels
+        + '</svg><div class="legend">' + legend + "</div>"
     )
 
 
@@ -505,7 +587,8 @@ def _weight_history_html(config: dict[str, Any], report: Any) -> str:
     for node in config["nodes"]:
         node_id = str(node["id"])
         children_ids = node.get("children") or []
-        if not children_ids:
+        own_instruments = node.get("instruments") or []
+        if not children_ids and not own_instruments:
             continue
         name = str(node.get("name") or node_id)
         forward_key = f"FORWARD_LOCAL:{name}"
@@ -565,7 +648,8 @@ def _weight_history_html(config: dict[str, Any], report: Any) -> str:
         return ""
     return (
         "<h2>Pesi storici per nodo</h2>"
-        '<p class="note">Per ogni nodo con figli, il peso locale assegnato a ogni componente '
+        '<p class="note">Per ogni nodo con figli o con una propria lista di strumenti, '
+        "il peso locale assegnato a ogni componente "
         "(ticker diretto, o proxy/sintetico di una sleeve figlia) a ogni ribilanciamento. "
         '"Backward" e la composizione finale (usa le serie _SYNTH per i figli espansi); '
         '"Forward" e il passaggio diagnostico sul solo proxy raw, disponibile solo in modalita '

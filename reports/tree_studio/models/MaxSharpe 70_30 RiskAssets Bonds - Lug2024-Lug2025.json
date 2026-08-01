@@ -1,0 +1,89 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "Max Sharpe 70/30 Portfolio",
+      "children": [
+        "sleeve_risk",
+        "sleeve_bond"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "max_leverage": 1.0,
+        "cash_enabled": false,
+        "risk_free_rate": 0.035
+      }
+    },
+    {
+      "id": "sleeve_risk",
+      "name": "Risk Assets (70%)",
+      "children": [],
+      "instruments": [
+        "SPY",
+        "QQQ",
+        "EEM",
+        "IWM",
+        "XLF",
+        "GLD",
+        "DBC"
+      ],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.0,
+        "max_weight": 1.0,
+        "cash_enabled": false,
+        "max_leverage": 1.0,
+        "risk_free_rate": 0.035
+      }
+    },
+    {
+      "id": "sleeve_bond",
+      "name": "Bonds (30%)",
+      "children": [],
+      "instruments": [
+        "TLT",
+        "IEF",
+        "AGG"
+      ],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.0,
+        "max_weight": 1.0,
+        "cash_enabled": false,
+        "max_leverage": 1.0,
+        "risk_free_rate": 0.035
+      }
+    }
+  ],
+  "data": {
+    "start": "2024-07-01",
+    "end": "2025-07-01"
+  },
+  "backtest": {
+    "id": "bt_maxsharpe_7030",
+    "train_size": 252,
+    "estimation_frequency": "D",
+    "rebalance_frequency": "M",
+    "transaction_cost_bps": 0,
+    "forward_enabled": false,
+    "hierarchy_mode": "flat",
+    "benchmark": {
+      "name": "70/30 SPY/AGG",
+      "weights": {
+        "SPY": 0.7,
+        "AGG": 0.3
+      }
+    }
+  }
+}
