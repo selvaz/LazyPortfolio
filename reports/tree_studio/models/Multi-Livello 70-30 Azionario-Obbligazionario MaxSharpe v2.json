@@ -1,0 +1,174 @@
+{
+  "root_id": "n0",
+  "nodes": [
+    {
+      "id": "n0",
+      "name": "Radice 100%",
+      "children": [
+        "n1a",
+        "n1b"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0,
+        "max_weight": 1,
+        "max_leverage": 1,
+        "cash_enabled": false
+      }
+    },
+    {
+      "id": "n1a",
+      "name": "Azionario & Rischio 70%",
+      "children": [
+        "n2_eq",
+        "n2_sector",
+        "n2_real"
+      ],
+      "instruments": [],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.35,
+        "max_weight": 1.0,
+        "max_leverage": 1
+      }
+    },
+    {
+      "id": "n2_eq",
+      "name": "Equity Core 40%",
+      "children": [],
+      "instruments": [
+        "SPY",
+        "QQQ",
+        "IWM"
+      ],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.2,
+        "max_weight": 0.6,
+        "max_leverage": 1
+      }
+    },
+    {
+      "id": "n2_sector",
+      "name": "Equity Settoriale & Geografico 20%",
+      "children": [],
+      "instruments": [
+        "XLF",
+        "EEM"
+      ],
+      "proxy": "XLF",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.0,
+        "max_weight": 0.4,
+        "max_leverage": 1
+      }
+    },
+    {
+      "id": "n2_real",
+      "name": "Real Assets 10%",
+      "children": [],
+      "instruments": [
+        "GLD",
+        "DBC"
+      ],
+      "proxy": "GLD",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.0,
+        "max_weight": 0.2,
+        "max_leverage": 1
+      }
+    },
+    {
+      "id": "n1b",
+      "name": "Obbligazionario & Difensivo 30%",
+      "children": [
+        "n2_treasury",
+        "n2_credit"
+      ],
+      "instruments": [],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.15,
+        "max_weight": 0.5,
+        "max_leverage": 1
+      }
+    },
+    {
+      "id": "n2_treasury",
+      "name": "Treasury 15%",
+      "children": [],
+      "instruments": [
+        "SHY",
+        "IEF",
+        "TLT"
+      ],
+      "proxy": "IEF",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.0,
+        "max_weight": 0.3,
+        "max_leverage": 1
+      }
+    },
+    {
+      "id": "n2_credit",
+      "name": "Credit & Aggregate 15%",
+      "children": [],
+      "instruments": [
+        "AGG",
+        "LQD",
+        "HYG"
+      ],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {
+        "min_weight": 0.0,
+        "max_weight": 0.3,
+        "max_leverage": 1
+      }
+    }
+  ],
+  "data": {
+    "start": "2023-07-29",
+    "end": "2026-07-29"
+  },
+  "backtest": {
+    "id": "bt_multi_level_7030_v2",
+    "train_size": 104,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "W",
+    "transaction_cost_bps": 10,
+    "forward_enabled": false,
+    "hierarchy_mode": "flat",
+    "benchmark": {
+      "name": "70/30 Balanced",
+      "weights": {
+        "ticker:SPY": 0.4,
+        "ticker:AGG": 0.3
+      }
+    }
+  }
+}

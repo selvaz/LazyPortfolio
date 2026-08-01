@@ -1,0 +1,355 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "Multi-Asset Nested Portfolio",
+      "children": [
+        "eq_node",
+        "fi_node",
+        "cmdty_node",
+        "re_node",
+        "crypto_node"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "eq_node",
+      "name": "Azionario (40%)",
+      "children": [
+        "eq_usa_lc",
+        "eq_usa_sc",
+        "eq_usa_factors",
+        "eq_usa_sector"
+      ],
+      "instruments": [],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "eq_usa_lc",
+      "name": "USA Large Cap (60% di Azionario)",
+      "children": [],
+      "instruments": [
+        "SPY",
+        "QQQ",
+        "VGT"
+      ],
+      "proxy": "QQQ",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "eq_usa_sc",
+      "name": "USA Small Cap (15% di Azionario)",
+      "children": [],
+      "instruments": [
+        "IWM"
+      ],
+      "proxy": "IWM",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "eq_usa_factors",
+      "name": "USA Factor (10% di Azionario)",
+      "children": [],
+      "instruments": [
+        "VUG",
+        "VTV"
+      ],
+      "proxy": "VUG",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "eq_usa_sector",
+      "name": "Settoriale (15% di Azionario)",
+      "children": [],
+      "instruments": [
+        "XLV",
+        "XLF",
+        "XLI",
+        "XLP",
+        "XLE"
+      ],
+      "proxy": "XLV",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "fi_node",
+      "name": "Obbligazionario (30%)",
+      "children": [
+        "fi_treasury",
+        "fi_corp",
+        "fi_inflation",
+        "fi_em_global"
+      ],
+      "instruments": [],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "fi_treasury",
+      "name": "Treasury USA (40% di Obbligazionario)",
+      "children": [],
+      "instruments": [
+        "SHY",
+        "IEI",
+        "IEF",
+        "TLT"
+      ],
+      "proxy": "IEF",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "fi_corp",
+      "name": "Corporate (30% di Obbligazionario)",
+      "children": [],
+      "instruments": [
+        "LQD",
+        "VCSH",
+        "HYG"
+      ],
+      "proxy": "LQD",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "fi_inflation",
+      "name": "Inflation (15% di Obbligazionario)",
+      "children": [],
+      "instruments": [
+        "TIP"
+      ],
+      "proxy": "TIP",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "fi_em_global",
+      "name": "EM/Global (15% di Obbligazionario)",
+      "children": [],
+      "instruments": [
+        "EMB",
+        "BNDX"
+      ],
+      "proxy": "EMB",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "cmdty_node",
+      "name": "Commodities (12%)",
+      "children": [
+        "cmdty_metals",
+        "cmdty_energy",
+        "cmdty_agri",
+        "cmdty_multi"
+      ],
+      "instruments": [],
+      "proxy": "PDBC",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "cmdty_metals",
+      "name": "Oro/Metalli (40% di Commodities)",
+      "children": [],
+      "instruments": [
+        "GLD",
+        "SLV"
+      ],
+      "proxy": "GLD",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "cmdty_energy",
+      "name": "Energia (35% di Commodities)",
+      "children": [],
+      "instruments": [
+        "USO",
+        "UNG"
+      ],
+      "proxy": "USO",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "cmdty_agri",
+      "name": "Agricoltura (15% di Commodities)",
+      "children": [],
+      "instruments": [
+        "DBA"
+      ],
+      "proxy": "DBA",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "cmdty_multi",
+      "name": "Multi-commodity (10% di Commodities)",
+      "children": [],
+      "instruments": [
+        "PDBC"
+      ],
+      "proxy": "DBC",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "re_node",
+      "name": "Real Estate (8%)",
+      "children": [
+        "re_us",
+        "re_global"
+      ],
+      "instruments": [],
+      "proxy": "VNQ",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "re_us",
+      "name": "VNQ (70% di RE)",
+      "children": [],
+      "instruments": [
+        "VNQ"
+      ],
+      "proxy": "VNQ",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "re_global",
+      "name": "VNQI (30% di RE)",
+      "children": [],
+      "instruments": [
+        "VNQI"
+      ],
+      "proxy": "VNQI",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "crypto_node",
+      "name": "Crypto (10%)",
+      "children": [
+        "crypto_btc",
+        "crypto_eth",
+        "crypto_sol"
+      ],
+      "instruments": [],
+      "proxy": "BTC-USD",
+      "goal": {
+        "objective": "hrp"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "crypto_btc",
+      "name": "BTC-USD (60% di Crypto)",
+      "children": [],
+      "instruments": [
+        "BTC-USD"
+      ],
+      "proxy": "BTC-USD",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "crypto_eth",
+      "name": "ETH-USD (25% di Crypto)",
+      "children": [],
+      "instruments": [
+        "ETH-USD"
+      ],
+      "proxy": "ETH-USD",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "crypto_sol",
+      "name": "SOL-USD (15% di Crypto)",
+      "children": [],
+      "instruments": [
+        "SOL-USD"
+      ],
+      "proxy": "SOL-USD",
+      "goal": {
+        "objective": "min_risk"
+      },
+      "constraints": {}
+    }
+  ],
+  "data": {
+    "start": "2020-01-01",
+    "end": "2026-07-28"
+  },
+  "backtest": {
+    "id": "multi_asset_nested_v1",
+    "train_size": 52,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "W",
+    "transaction_cost_bps": 5,
+    "forward_enabled": true,
+    "hierarchy_mode": "forward",
+    "benchmark": {
+      "name": "70/30 SPY+AGG",
+      "weights": {
+        "ticker:SPY": 0.7,
+        "ticker:AGG": 0.3
+      }
+    }
+  }
+}

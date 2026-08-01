@@ -1,0 +1,100 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "Multi-Asset Nested",
+      "children": [
+        "equity_node",
+        "bond_node",
+        "commodities_node",
+        "crypto_node"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "equity_node",
+      "name": "Azionario (50%)",
+      "children": [],
+      "instruments": [
+        "SPY",
+        "EEM",
+        "QQQ"
+      ],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "bond_node",
+      "name": "Obbligazionario (25%)",
+      "children": [],
+      "instruments": [
+        "TLT",
+        "IEF",
+        "AGG"
+      ],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "commodities_node",
+      "name": "Commodities (10%)",
+      "children": [],
+      "instruments": [
+        "GLD",
+        "DBC"
+      ],
+      "proxy": "GLD",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "crypto_node",
+      "name": "Crypto (5%)",
+      "children": [],
+      "instruments": [
+        "BTC-USD"
+      ],
+      "proxy": "BTC-USD",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    }
+  ],
+  "data": {
+    "start": "2020-01-01",
+    "end": "2025-07-18"
+  },
+  "backtest": {
+    "id": "multi_asset_backtest",
+    "train_size": 52,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "W",
+    "transaction_cost_bps": 0,
+    "forward_enabled": false,
+    "hierarchy_mode": "flat",
+    "benchmark": {
+      "name": "70/30 Benchmark",
+      "weights": {
+        "ticker:SPY": 0.56,
+        "ticker:EEM": 0.14,
+        "ticker:TLT": 0.15,
+        "ticker:IEF": 0.15
+      }
+    }
+  }
+}

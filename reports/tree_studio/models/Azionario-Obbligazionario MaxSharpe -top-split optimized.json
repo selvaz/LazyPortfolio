@@ -1,0 +1,125 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "Portfolio Azionario/Obbligazionario (top split engine-optimized)",
+      "children": [
+        "azi",
+        "obb"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "azi",
+      "name": "Azionario",
+      "children": [
+        "core",
+        "sat"
+      ],
+      "instruments": [],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "obb",
+      "name": "Obbligazionario",
+      "children": [
+        "tsy",
+        "cred"
+      ],
+      "instruments": [],
+      "proxy": "AGG",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "core",
+      "name": "Equity Core",
+      "children": [],
+      "instruments": [
+        "SPY",
+        "QQQ"
+      ],
+      "proxy": "SPY",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "sat",
+      "name": "Equity Satellite",
+      "children": [],
+      "instruments": [
+        "IWM",
+        "EEM",
+        "XLF",
+        "GLD",
+        "DBC"
+      ],
+      "proxy": "IWM",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "tsy",
+      "name": "Treasury",
+      "children": [],
+      "instruments": [
+        "IEF",
+        "TLT",
+        "SHY",
+        "AGG"
+      ],
+      "proxy": "IEF",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    },
+    {
+      "id": "cred",
+      "name": "Credit",
+      "children": [],
+      "instruments": [
+        "HYG",
+        "LQD"
+      ],
+      "proxy": "LQD",
+      "goal": {
+        "objective": "max_ratio"
+      },
+      "constraints": {}
+    }
+  ],
+  "data": {
+    "start": "2023-08-01",
+    "end": "2026-07-31"
+  },
+  "backtest": {
+    "id": "hl_azi_obb_maxsharpe",
+    "train_size": 104,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "M",
+    "transaction_cost_bps": 0,
+    "forward_enabled": false,
+    "hierarchy_mode": "flat",
+    "benchmark": {
+      "name": "70/30 Benchmark",
+      "weights": {}
+    }
+  }
+}

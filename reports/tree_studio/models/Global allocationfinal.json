@@ -1,0 +1,669 @@
+{
+  "backtest": {
+    "benchmark": {
+      "id": "B0",
+      "name": "ACWI / AGG 70/30",
+      "weights": {
+        "ACWI": "0.7",
+        "AGG": "0.3"
+      }
+    },
+    "estimation_frequency": "W",
+    "forward_enabled": true,
+    "hierarchy_mode": "synthetic_reconstructed",
+    "id": "acwi-agg-70-30",
+    "rebalance_frequency": "M",
+    "scientific_study": {
+      "bootstrap_block_size": 20,
+      "bootstrap_samples": 2000,
+      "enabled": false,
+      "random_seed": 7
+    },
+    "train_size": 104,
+    "transaction_cost_bps": "5"
+  },
+  "data": {
+    "end": "",
+    "start": "2010-01-01",
+    "risk_free_annual": "0",
+    "borrow_spread_bps": "0"
+  },
+  "nodes": [
+    {
+      "children": [
+        "equity",
+        "bonds",
+        "commodities",
+        "alternative"
+      ],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "max_tracking_error": "0.05",
+        "tracking_error_policy": "nearest_feasible",
+        "tracking_error_reference": "benchmark",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "volatility_reference": "none",
+        "vol_target": "",
+        "volatility_target_policy": "hard_fail",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "root",
+      "instruments": [],
+      "name": "Global allocation",
+      "proxy": "",
+      "representation": "synthetic",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [
+        "eq_developed",
+        "eq_emerging"
+      ],
+      "constraints": {
+        "cash_enabled": false,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "equity",
+      "instruments": [],
+      "name": "Equity",
+      "proxy": "ACWI",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [
+        "eq_us",
+        "eq_europe"
+      ],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "eq_developed",
+      "instruments": [
+        "EWJ",
+        "EWC",
+        "EWA"
+      ],
+      "name": "Equity Developed",
+      "proxy": "VEA",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "eq_us",
+      "instruments": [
+        "XLC",
+        "XLY",
+        "XLP",
+        "XLE",
+        "XLF",
+        "XLV",
+        "XLI",
+        "XLU",
+        "XLB",
+        "VGT",
+        "XLRE"
+      ],
+      "name": "Equity US",
+      "proxy": "SPY",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "0.05",
+        "tracking_error_reference": "father_proxy",
+        "tracking_error_policy": "nearest_feasible",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "eq_europe",
+      "instruments": [
+        "EXV1.DE",
+        "EXV3.DE",
+        "EXV4.DE",
+        "EXH4.DE",
+        "EXH1.DE",
+        "EXH9.DE"
+      ],
+      "name": "Equity Europe",
+      "proxy": "VGK",
+      "representation": "proxy",
+      "inherits": "root",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "0.05",
+        "tracking_error_reference": "father_proxy",
+        "tracking_error_policy": "nearest_feasible",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "eq_emerging",
+      "instruments": [
+        "MCHI",
+        "EWT",
+        "INDA",
+        "EWY",
+        "EWZ",
+        "EWW",
+        "EZA",
+        "KSA"
+      ],
+      "name": "Equity Emerging",
+      "proxy": "VWO",
+      "representation": "proxy",
+      "inherits": "root",
+      "benchmarks": []
+    },
+    {
+      "children": [
+        "bonds_developed",
+        "bonds_em"
+      ],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "bonds",
+      "instruments": [],
+      "name": "Bonds",
+      "proxy": "AGG",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": false,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "bonds_developed",
+      "instruments": [
+        "TLT",
+        "SHY",
+        "IBCL.DE",
+        "DBXP.DE",
+        "LQD",
+        "HYG",
+        "IEAC.AS",
+        "EUHY"
+      ],
+      "name": "Bonds Developed",
+      "proxy": "AGG",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "bonds_em",
+      "instruments": [
+        "EMB",
+        "EMLC"
+      ],
+      "name": "Bonds Emerging",
+      "proxy": "EMB",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [
+        "commodities_metals",
+        "commodities_fuel",
+        "commodities_agriculture"
+      ],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "commodities",
+      "instruments": [],
+      "name": "Commodities",
+      "proxy": "DBC",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "commodities_metals",
+      "instruments": [
+        "GLD",
+        "SLV",
+        "PPLT",
+        "PALL",
+        "CPER"
+      ],
+      "name": "Commodities Metals",
+      "proxy": "DBB",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "commodities_fuel",
+      "instruments": [
+        "USO",
+        "UNG",
+        "UGA"
+      ],
+      "name": "Commodities Fuel",
+      "proxy": "USO",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "commodities_agriculture",
+      "instruments": [
+        "CORN",
+        "WEAT",
+        "SOYB"
+      ],
+      "name": "Commodities Agriculture",
+      "proxy": "DBA",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "children": [],
+      "constraints": {
+        "cash_enabled": true,
+        "max_leverage": "1",
+        "volatility_reference": "father_proxy",
+        "volatility_target_policy": "nearest_feasible",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "borrow_spread_bps": "",
+        "vol_target": "",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "goal": {
+        "objective": "max_return"
+      },
+      "id": "alternative",
+      "instruments": [
+        "VNQ",
+        "VNQI",
+        "IGF",
+        "BTC-USD"
+      ],
+      "name": "Alternative",
+      "proxy": "VNQ",
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    }
+  ],
+  "root_id": "root",
+  "legacy": {
+    "id": "legacy-benchmark-vol",
+    "universe": [
+      "SPY",
+      "GLD",
+      "TLT",
+      "BCI"
+    ],
+    "estimation_frequency": "W",
+    "rebalance_frequency": "M",
+    "train_size": 156,
+    "per_asset_cap": "0.6",
+    "transaction_cost_bps": "10",
+    "benchmark": {
+      "id": "legacy-70-30",
+      "name": "SPY / TLT 70/30",
+      "weights": {
+        "SPY": "0.7",
+        "TLT": "0.3"
+      }
+    }
+  }
+}

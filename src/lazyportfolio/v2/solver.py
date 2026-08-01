@@ -1046,9 +1046,19 @@ class V2LocalOptimizer:
 
         bounds = list(zip(lower, upper, strict=True))
         stage_constraints = list(hard_constraints)
+        tev_constraint_obj: dict[str, Any] | None = None
+        vol_constraint_obj: dict[str, Any] | None = None
+        # Witness points a stage's own projection already proved feasible for
+        # its resolved bound -- seeding stage C's SLSQP restarts with these
+        # (on top of the generic `starts`) fixes the common case where a
+        # feasible point provably exists (this one) but none of the generic
+        # starts happens to be near it, so every restart fails to converge
+        # even though the constraint set itself is not empty.
+        tev_weights: np.ndarray | None = None
+        dev_weights: np.ndarray | None = None
 
         if tev_limit is not None:
-            tev_min, _ = cls._minimize_metric(
+            tev_min, tev_weights = cls._minimize_metric(
                 tracking_error, starts, lower, upper, hard_constraints
             )
             if tev_min is None:
@@ -1084,14 +1094,13 @@ class V2LocalOptimizer:
                         "status": "nearest_feasible",
                     }
                 )
-            stage_constraints.append(
-                {
-                    "type": "ineq",
-                    "fun": lambda weights, bound=tev_bound: (
-                        bound - tracking_error(weights)
-                    ),
-                }
-            )
+            tev_constraint_obj = {
+                "type": "ineq",
+                "fun": lambda weights, bound=tev_bound: (
+                    bound - tracking_error(weights)
+                ),
+            }
+            stage_constraints.append(tev_constraint_obj)
 
         if target is not None:
 
@@ -1116,14 +1125,13 @@ class V2LocalOptimizer:
                         "status": "matched",
                     }
                 )
-                stage_constraints.append(
-                    {
-                        "type": "eq",
-                        "fun": lambda weights, target=target: (
-                            volatility(weights) - target
-                        ),
-                    }
-                )
+                vol_constraint_obj = {
+                    "type": "eq",
+                    "fun": lambda weights, target=target: (
+                        volatility(weights) - target
+                    ),
+                }
+                stage_constraints.append(vol_constraint_obj)
             elif volatility_target_policy == "hard_fail":
                 raise V2OptimizationError(
                     "volatility target is infeasible under hard constraints "
@@ -1143,39 +1151,106 @@ class V2LocalOptimizer:
                         "status": "nearest_feasible",
                     }
                 )
-                stage_constraints.append(
+                vol_constraint_obj = {
+                    "type": "ineq",
+                    "fun": lambda weights, achieved=achieved_vol, band=band: (
+                        band - abs(volatility(weights) - achieved)
+                    ),
+                }
+                stage_constraints.append(vol_constraint_obj)
+
+        def _solve_objective(
+            constraints: list[dict[str, Any]], extra_starts: list[np.ndarray] | None = None
+        ) -> Any | None:
+            refined: list[Any] = []
+            for start in [*starts, *(extra_starts or [])]:
+                candidate = minimize(
+                    economic_loss,
+                    start,
+                    method="SLSQP",
+                    bounds=bounds,
+                    constraints=constraints,
+                    options={"ftol": 1e-12, "maxiter": 3_000, "disp": False},
+                )
+                if candidate.success:
+                    weights = np.asarray(candidate.x, dtype=float)
+                    if (
+                        abs(float(weights.sum()) - 1.0) <= 2e-6
+                        and not np.any(weights < lower - 2e-6)
+                        and not np.any(weights > upper + 2e-6)
+                    ):
+                        refined.append(candidate)
+            return min(refined, key=lambda item: float(item.fun)) if refined else None
+
+        # dev_weights (stage B's own witness) already satisfies stage_constraints
+        # in full -- it was found *inside* the TEV bound (if any) and its own
+        # volatility deviation from the target is exactly what the vol band is
+        # centered on. tev_weights (stage A's witness) only satisfies the TEV
+        # bound in isolation, so it is not a safe seed for the joint set.
+        best = _solve_objective(
+            stage_constraints, extra_starts=[dev_weights] if dev_weights is not None else None
+        )
+        if best is not None:
+            stage_results.append({"stage": "objective", "status": "optimized"})
+            return best
+
+        # The TEV and volatility bands were resolved independently (stage A,
+        # then stage B inside stage A's own bound) -- each is feasible in
+        # isolation, but pinning BOTH simultaneously for the objective solve
+        # (stage C) can still be jointly infeasible. Only ever relax here
+        # when the caller already opted into "nearest feasible" for BOTH --
+        # a "within_limit"/"matched" bound was exactly achievable on its own
+        # merit and must not be silently loosened. TEV keeps priority over
+        # volatility, per the configured stage order (A before B).
+        if (
+            tev_constraint_obj is not None
+            and vol_constraint_obj is not None
+            and tracking_error_policy == "nearest_feasible"
+            and volatility_target_policy == "nearest_feasible"
+        ):
+            tev_only = [*hard_constraints, tev_constraint_obj]
+            best = _solve_objective(
+                tev_only, extra_starts=[tev_weights] if tev_weights is not None else None
+            )
+            if best is not None:
+                stage_results.append(
                     {
-                        "type": "ineq",
-                        "fun": lambda weights, achieved=achieved_vol, band=band: (
-                            band - abs(volatility(weights) - achieved)
+                        "stage": "objective",
+                        "status": "optimized_tev_priority",
+                        "note": (
+                            "joint TEV+volatility bound was infeasible for the "
+                            "objective; volatility band relaxed, TEV band kept"
                         ),
                     }
                 )
+                return best
 
-        refined: list[Any] = []
-        for start in starts:
-            candidate = minimize(
-                economic_loss,
-                start,
-                method="SLSQP",
-                bounds=bounds,
-                constraints=stage_constraints,
-                options={"ftol": 1e-12, "maxiter": 3_000, "disp": False},
+            vol_only = [*hard_constraints, vol_constraint_obj]
+            best = _solve_objective(
+                vol_only, extra_starts=[dev_weights] if dev_weights is not None else None
             )
-            if candidate.success:
-                weights = np.asarray(candidate.x, dtype=float)
-                if (
-                    abs(float(weights.sum()) - 1.0) <= 2e-6
-                    and not np.any(weights < lower - 2e-6)
-                    and not np.any(weights > upper + 2e-6)
-                ):
-                    refined.append(candidate)
-        if refined:
-            stage_results.append({"stage": "objective", "status": "optimized"})
-            return min(refined, key=lambda item: float(item.fun))
+            if best is not None:
+                stage_results.append(
+                    {
+                        "stage": "objective",
+                        "status": "optimized_volatility_priority",
+                        "note": (
+                            "joint TEV+volatility bound was infeasible for the "
+                            "objective; TEV band relaxed, volatility band kept"
+                        ),
+                    }
+                )
+                return best
+
         raise V2OptimizationError(
             "the economic objective could not be optimized subject to the "
             "resolved TEV/volatility stage bounds"
+            + (
+                ", even after relaxing to either bound alone"
+                if tracking_error_policy == "nearest_feasible"
+                and volatility_target_policy == "nearest_feasible"
+                else ""
+            )
         )
 
     @staticmethod
