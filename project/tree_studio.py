@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from tree_studio_v2.exports import build_audit_bundle, build_client_report
 
+from lazyportfolio.artifact_registry import register_report_artifact
 from lazyportfolio.backend import MarketDataHubOptimizationBackend, OptimizationDataset
 from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns
 from lazyportfolio.hierarchical_v2 import (
@@ -345,6 +346,41 @@ def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, 
         "audit": (audit, "application/zip", f"{stem}-v2-audit.zip"),
         "report": (client, "text/html; charset=utf-8", f"{stem}-v2-report.html"),
     }
+
+
+def _report_artifact_fields(config: dict[str, Any]) -> tuple[str, str]:
+    """Derive a human-recognizable title/summary for a generated Tree Studio
+    report directly from the tree config.
+
+    There is no session/date concept here -- report generation is on-demand
+    and human-triggered, not a scheduled/dated batch job -- so this uses the
+    root node's name instead (the same lookup ``_v2_export_artifacts`` above
+    already does to derive the export filename stem), plus the tree's node
+    names and instruments for a keyword-dense summary (``search_artifacts``
+    only ever matches title/summary/tags, never the stored HTML content).
+    """
+    nodes = config.get("nodes") if isinstance(config.get("nodes"), list) else []
+    root_id = str(config.get("root_id") or "")
+    root = next((node for node in nodes if str(node.get("id")) == root_id), None)
+    root_name = str((root or {}).get("name") or "hierarchical-model")
+    title = f"Tree Studio report: {root_name}"
+
+    node_names = [str(node.get("name") or node.get("id") or "") for node in nodes if isinstance(node, dict)]
+    instruments: list[str] = []
+    for node in nodes:
+        if isinstance(node, dict):
+            instruments.extend(str(item) for item in (node.get("instruments") or []) if item)
+    backtest = config.get("backtest") if isinstance(config.get("backtest"), dict) else {}
+    benchmark = backtest.get("benchmark") if isinstance(backtest.get("benchmark"), dict) else {}
+    weights = benchmark.get("weights") if isinstance(benchmark.get("weights"), dict) else {}
+    instruments.extend(str(symbol) for symbol in weights)
+    unique_instruments = list(dict.fromkeys(instruments))
+    summary = (
+        f"Tree Studio HTML report for '{root_name}' "
+        f"({len(nodes)} nodes: {', '.join(node_names) or 'n/a'}); "
+        f"instruments: {', '.join(unique_instruments) or 'n/a'}"
+    )
+    return title, summary
 
 
 def _chart_curve(series: Any, *, max_points: int = 600) -> list[dict[str, float | str]]:
@@ -757,6 +793,20 @@ class StudioHandler(BaseHTTPRequestHandler):
                     # see lazyportfolio.v2.run_cache's module docstring.
                     report_body, report_ct, report_fn = artifacts["report"]
                     _run_cache_store.put_report(key, report_body, report_ct, report_fn)
+                    # Best-effort catalog entry -- only for the HTML report
+                    # (never the audit ZIP, matching the persistence policy
+                    # just above), and only right here where the report is
+                    # genuinely (re)generated, never on a cache hit -- a
+                    # re-view of an already-cached report must not insert a
+                    # fresh artifact row every time.
+                    if kind == "report":
+                        title, summary = _report_artifact_fields(config)
+                        register_report_artifact(
+                            title=title,
+                            summary=summary,
+                            tags=["tree-studio"],
+                            content=report_body.decode("utf-8"),
+                        )
                 body, content_type, filename = artifacts[kind]
                 self._binary(HTTPStatus.OK, body, content_type, filename)
             else:
