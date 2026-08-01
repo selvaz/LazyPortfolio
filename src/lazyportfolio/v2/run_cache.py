@@ -54,10 +54,14 @@ def _connect(cache_path: str | os.PathLike[str] | None = None) -> sqlite3.Connec
     return conn
 
 
-def get_run_result(key: str, *, cache_path: str | os.PathLike[str] | None = None) -> dict[str, Any] | None:
+def get_run_result(
+    key: str, *, cache_path: str | os.PathLike[str] | None = None
+) -> dict[str, Any] | None:
     """Look up a cached JSON run result (estimate/backtest/scientific-study) by key."""
     with closing(_connect(cache_path)) as conn:
-        row = conn.execute("SELECT payload FROM cache WHERE key = ? AND kind = 'run'", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT payload FROM cache WHERE key = ? AND kind = 'run'", (key,)
+        ).fetchone()
     return json.loads(row[0]) if row else None
 
 
@@ -80,7 +84,8 @@ def get_report(
     """Look up a cached client HTML report by key -> ``(body, content_type, filename)``."""
     with closing(_connect(cache_path)) as conn:
         row = conn.execute(
-            "SELECT blob, content_type, filename FROM cache WHERE key = ? AND kind = 'report'", (key,)
+            "SELECT blob, content_type, filename FROM cache WHERE key = ? AND kind = 'report'",
+            (key,),
         ).fetchone()
     return (row[0], row[1], row[2]) if row else None
 

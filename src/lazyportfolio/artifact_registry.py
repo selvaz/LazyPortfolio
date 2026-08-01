@@ -31,12 +31,22 @@ with ``content=`` (the actual HTML text), not ``content_uri=``.
 from __future__ import annotations
 
 import sys
+from typing import Any
 
+# Declared Any up front so the two branches below type-check identically
+# whether or not lazytools is actually resolvable to mypy in this
+# environment (it resolves to concrete types locally when the sibling
+# LazyTools checkout is installed, but CI never installs this optional
+# dependency at all) -- without this, one of the two branches always ends
+# up with an "unused ignore"/"incompatible assignment" mypy error depending
+# on which environment ran the check.
+resolve_db: Any
+register_artifact: Any
 try:
     from lazytools.registry import register_artifact, resolve_db
 except ImportError:
-    resolve_db = None  # type: ignore[assignment]
-    register_artifact = None  # type: ignore[assignment]
+    resolve_db = None
+    register_artifact = None
 
 
 def register_report_artifact(
@@ -69,7 +79,7 @@ def register_report_artifact(
         db_path = resolve_db("lazyportfolio_artifacts")
         if not db_path:
             return None  # LAZYPORTFOLIO_ARTIFACTS_DB unset -- optional, skip silently
-        return register_artifact(
+        return register_artifact(  # type: ignore[no-any-return]
             db_path,
             repo="lazyportfolio",
             kind="report",
