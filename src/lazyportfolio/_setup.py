@@ -36,6 +36,14 @@ def _pip(*args: str) -> None:
     subprocess.run([sys.executable, "-m", "pip", *args], check=True)
 
 
+def _already_installed(name: str) -> bool:
+    try:
+        metadata.version(name)
+        return True
+    except metadata.PackageNotFoundError:
+        return False
+
+
 def _extra_requirements(extra: str, seen: set[str] | None = None) -> list[str]:
     """Flatten one of this package's own extras into concrete pip specs.
 
@@ -82,6 +90,14 @@ def _install_market_data_hub(sibling_hub: Path | None) -> None:
     """
     if sibling_hub is not None:
         _pip("install", "-e", str(sibling_hub))
+        return
+
+    if _already_installed("market-data-hub"):
+        print(
+            "\nmarket-data-hub is already installed -- leaving it as-is "
+            "rather than reinstalling the older revision pinned by the "
+            "'datacore' extra (which would silently downgrade it)."
+        )
         return
 
     pinned_specs = _extra_requirements("datacore")
@@ -134,6 +150,22 @@ def _set_persistent_env_var(name: str, value: str) -> None:
             f"  (non-Windows: add 'export {name}=\"{value}\"' to your shell profile "
             "to persist this across sessions)"
         )
+
+
+def _ask_optional_path(prompt: str, env_name: str) -> None:
+    existing = os.environ.get(env_name)
+    value: str | None
+    if existing:
+        answer = input(f"{prompt} [{existing}] (press Enter to keep): ").strip()
+        value = answer or existing
+    else:
+        answer = input(f"{prompt} (press Enter to skip): ").strip()
+        value = answer or None
+    if value:
+        _set_persistent_env_var(env_name, value)
+        print(f"{env_name}={value}")
+    else:
+        print(f"Skipping {env_name}.")
 
 
 def _select_market_data_db(requested: str | None, sibling_hub: Path | None) -> str | None:
@@ -234,6 +266,13 @@ def main(argv: list[str] | None = None) -> int:
             '\nNo database configured. Set it later, e.g.: '
             'setx MARKET_DATA_DB "<path-to.duckdb>"'
         )
+
+    print()
+    _ask_optional_path(
+        "Artifact catalog DB (LazyPortfolio reports, shared cross-repo via LazyTools' registry)",
+        "LAZYPORTFOLIO_ARTIFACTS_DB",
+    )
+    _ask_optional_path("Tree Studio run-cache DB", "LAZYPORTFOLIO_TREE_CACHE_DB")
 
     print("\n==> Verifying imports")
     verify_code = "import lazyportfolio, market_data_hub; print('LazyPortfolio environment OK')"
