@@ -13,9 +13,13 @@ pieces, and locates or asks for the Market Data Hub ``.duckdb`` database.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from importlib import metadata
 from pathlib import Path
 
@@ -34,6 +38,106 @@ def _find_repo_root() -> Path | None:
 
 def _pip(*args: str) -> None:
     subprocess.run([sys.executable, "-m", "pip", *args], check=True)
+
+
+_GITHUB_URL_RE = re.compile(r"https://github\.com/([^/]+)/([^/.]+)(?:\.git)?/?$")
+
+
+def _github_compare_status(repo_url: str, base: str, head: str) -> str | None:
+    """GitHub's ahead/behind/identical/diverged status comparing
+    ``base...head`` via the (unauthenticated, no-clone) compare API.
+    ``base``/``head`` may be any git ref GitHub accepts -- a branch, tag,
+    or commit SHA. ``None`` if it can't be determined (non-GitHub URL,
+    network/API failure, rate limit, unknown ref) -- callers must treat
+    that as "unknown", never as "satisfies the pin"."""
+    match = _GITHUB_URL_RE.match(repo_url)
+    if not match:
+        return None
+    owner, repo = match.group(1), match.group(2)
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
+    try:
+        request = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+    status = payload.get("status")
+    return status if isinstance(status, str) else None
+
+
+def _installed_satisfies_pin(name: str, repo_url: str, pinned_ref: str) -> bool:
+    """True if ``name`` doesn't need to be (re)installed to satisfy the
+    pin: either it's an editable install (a deliberate local checkout --
+    trusted unconditionally, exactly like the ``sibling_hub is not None``
+    branch above trusts one without ever checking its revision either), or
+    it's a direct git reference whose installed commit is at or after
+    ``pinned_ref`` in ``repo_url``'s history.
+
+    An editable install (``pip install -e /local/checkout``) records
+    ``dir_info`` in ``direct_url.json``, not ``vcs_info`` -- checking only
+    ``vcs_info`` would fall through to "reinstall the pin" for an editable
+    sibling, silently replacing a developer's local checkout with a stale
+    git pin. That's a worse regression than the one this function exists
+    to prevent, so editable installs short-circuit to True first.
+
+    For a VCS install, ancestry -- not exact-tip equality -- is the only
+    check that's actually correct. Comparing against ``requested_revision``
+    alone (was it literally installed via "@main"?) can't tell "installed
+    from main a minute ago" apart from "installed from main months ago,
+    now stale relative to a newer pin" -- both report the same ref string
+    forever. Comparing against today's remote ``main`` tip for exact
+    equality over-corrects the other way: an install that's newer than the
+    pin but a few commits behind today's tip would then be wrongly treated
+    as stale and downgraded BACK to the pin. Only "is the installed commit
+    an ancestor of, or equal to, the pin's target" -- checked via GitHub's
+    compare API, no clone needed -- answers the right question for every
+    remaining case: absent, a wheel/sdist install, an older pin, or a
+    commit genuinely behind the pin all correctly fall through to
+    installing the pin.
+    """
+    try:
+        dist = metadata.distribution(name)
+    except metadata.PackageNotFoundError:
+        return False
+    try:
+        raw = dist.read_text("direct_url.json")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if not raw:
+        return False
+    try:
+        info = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    dir_info = info.get("dir_info") or {}
+    if dir_info.get("editable"):
+        return True
+    vcs_info = info.get("vcs_info") or {}
+    if vcs_info.get("vcs") != "git":
+        return False
+    installed_commit = vcs_info.get("commit_id")
+    if not installed_commit:
+        return False
+    if installed_commit == pinned_ref:
+        return True
+    status = _github_compare_status(repo_url, pinned_ref, installed_commit)
+    return status in ("ahead", "identical")
+
+
+def _spec_ref(spec: str) -> str | None:
+    """Extract the pinned ref (tag or commit SHA) from a direct-reference
+    spec like ``name @ git+https://.../Repo.git@v1.2.3``. Splits on the
+    name/URL separator (" @ ") first, then looks for a further "@" inside
+    just the URL portion -- a bare, unpinned URL (no trailing "@ref") or a
+    plain version-constrained spec (no " @ " at all) both correctly
+    return ``None`` rather than misreading the name/URL separator itself
+    as a ref marker."""
+    if " @ " not in spec:
+        return None
+    url_part = spec.split(" @ ", 1)[1]
+    if "@" not in url_part:
+        return None
+    return url_part.rsplit("@", 1)[-1].strip() or None
 
 
 def _extra_requirements(extra: str, seen: set[str] | None = None) -> list[str]:
@@ -92,6 +196,17 @@ def _install_market_data_hub(sibling_hub: Path | None) -> None:
             "never happen for a normally-installed lazyportfolio; reinstall the "
             "package or report this as a bug."
         )
+
+    pinned_ref = _spec_ref(pinned_specs[0])
+    if pinned_ref and _installed_satisfies_pin(
+        "market-data-hub", MARKET_DATA_HUB_GIT_URL, pinned_ref
+    ):
+        print(
+            "\nmarket-data-hub is already installed at or after the pinned "
+            "revision -- leaving it as-is rather than reinstalling."
+        )
+        return
+
     _pip("install", *pinned_specs)
     print(
         f"\nNo local market-data-hub checkout found. Installed the pinned "
@@ -136,6 +251,22 @@ def _set_persistent_env_var(name: str, value: str) -> None:
         )
 
 
+def _ask_optional_path(prompt: str, env_name: str) -> None:
+    existing = os.environ.get(env_name)
+    value: str | None
+    if existing:
+        answer = input(f"{prompt} [{existing}] (press Enter to keep): ").strip()
+        value = answer or existing
+    else:
+        answer = input(f"{prompt} (press Enter to skip): ").strip()
+        value = answer or None
+    if value:
+        _set_persistent_env_var(env_name, value)
+        print(f"{env_name}={value}")
+    else:
+        print(f"Skipping {env_name}.")
+
+
 def _select_market_data_db(requested: str | None, sibling_hub: Path | None) -> str | None:
     if requested:
         return str(Path(requested).expanduser().resolve())
@@ -171,12 +302,8 @@ def _select_market_data_db(requested: str | None, sibling_hub: Path | None) -> s
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lazyportfolio-setup", description=__doc__)
-    parser.add_argument(
-        "--market-data-hub-path", help="Path to a local market-data-hub checkout"
-    )
-    parser.add_argument(
-        "--db-path", help="Skip the interactive prompt and use this .duckdb file"
-    )
+    parser.add_argument("--market-data-hub-path", help="Path to a local market-data-hub checkout")
+    parser.add_argument("--db-path", help="Skip the interactive prompt and use this .duckdb file")
     parser.add_argument(
         "--skip-tests",
         action="store_true",
@@ -231,9 +358,15 @@ def main(argv: list[str] | None = None) -> int:
             print("  (file does not exist yet - market-data-hub will create it on first run)")
     else:
         print(
-            '\nNo database configured. Set it later, e.g.: '
-            'setx MARKET_DATA_DB "<path-to.duckdb>"'
+            '\nNo database configured. Set it later, e.g.: setx MARKET_DATA_DB "<path-to.duckdb>"'
         )
+
+    print()
+    _ask_optional_path(
+        "Artifact catalog DB (LazyPortfolio reports, shared cross-repo via LazyTools' registry)",
+        "LAZYPORTFOLIO_ARTIFACTS_DB",
+    )
+    _ask_optional_path("Tree Studio run-cache DB", "LAZYPORTFOLIO_TREE_CACHE_DB")
 
     print("\n==> Verifying imports")
     verify_code = "import lazyportfolio, market_data_hub; print('LazyPortfolio environment OK')"
