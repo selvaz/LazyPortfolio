@@ -13,6 +13,7 @@ pieces, and locates or asks for the Market Data Hub ``.duckdb`` database.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -36,12 +37,37 @@ def _pip(*args: str) -> None:
     subprocess.run([sys.executable, "-m", "pip", *args], check=True)
 
 
-def _already_installed(name: str) -> bool:
+def _installed_via_main_branch(name: str) -> bool:
+    """True only if ``name`` was installed via a direct VCS reference to
+    that repo's ``main`` branch specifically (pip records this in the
+    installed distribution's ``direct_url.json``) -- e.g. this same setup
+    session's own ``pip install "name @ git+...@main"`` moments earlier.
+
+    Deliberately narrow: these packages don't bump their ``version`` on
+    every commit, so a version-number comparison can't tell "installed
+    from main a minute ago" apart from "installed from a stale pin two
+    months ago" -- both can report the same version string. A package
+    that's absent, installed from a wheel/sdist, or installed via any
+    OTHER ref (an older pin, a tag, a raw commit) is NOT treated as
+    current here, so the caller falls through to installing the pin --
+    matching the original, always-safe (if sometimes redundant) behavior.
+    """
     try:
-        metadata.version(name)
-        return True
+        dist = metadata.distribution(name)
     except metadata.PackageNotFoundError:
         return False
+    try:
+        raw = dist.read_text("direct_url.json")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if not raw:
+        return False
+    try:
+        info = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    vcs_info = info.get("vcs_info") or {}
+    return vcs_info.get("vcs") == "git" and vcs_info.get("requested_revision") == "main"
 
 
 def _extra_requirements(extra: str, seen: set[str] | None = None) -> list[str]:
@@ -92,11 +118,11 @@ def _install_market_data_hub(sibling_hub: Path | None) -> None:
         _pip("install", "-e", str(sibling_hub))
         return
 
-    if _already_installed("market-data-hub"):
+    if _installed_via_main_branch("market-data-hub"):
         print(
-            "\nmarket-data-hub is already installed -- leaving it as-is "
-            "rather than reinstalling the older revision pinned by the "
-            "'datacore' extra (which would silently downgrade it)."
+            "\nmarket-data-hub is already installed from its own main branch "
+            "-- leaving it as-is rather than reinstalling the older revision "
+            "pinned by the 'datacore' extra (which would silently downgrade it)."
         )
         return
 
