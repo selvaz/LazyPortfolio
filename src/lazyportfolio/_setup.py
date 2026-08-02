@@ -66,24 +66,34 @@ def _github_compare_status(repo_url: str, base: str, head: str) -> str | None:
 
 
 def _installed_satisfies_pin(name: str, repo_url: str, pinned_ref: str) -> bool:
-    """True only if ``name`` is installed via a direct git reference AND
-    its installed commit is at or after ``pinned_ref`` in ``repo_url``'s
-    history -- i.e. reinstalling the pin would not upgrade anything.
+    """True if ``name`` doesn't need to be (re)installed to satisfy the
+    pin: either it's an editable install (a deliberate local checkout --
+    trusted unconditionally, exactly like the ``sibling_hub is not None``
+    branch above trusts one without ever checking its revision either), or
+    it's a direct git reference whose installed commit is at or after
+    ``pinned_ref`` in ``repo_url``'s history.
 
-    Ancestry, not exact-tip equality, is the only check that's actually
-    correct here. Comparing against ``requested_revision`` alone (was it
-    literally installed via "@main"?) can't tell "installed from main a
-    minute ago" apart from "installed from main months ago, now stale
-    relative to a newer pin" -- both report the same ref string forever.
-    Comparing against today's remote ``main`` tip for exact equality
-    over-corrects the other way: an install that's newer than the pin but
-    a few commits behind today's tip would then be wrongly treated as
-    stale and downgraded BACK to the pin -- the exact bug this exists to
-    prevent. Only "is the installed commit an ancestor of, or equal to,
-    the pin's target" -- checked via GitHub's compare API, no clone
-    needed -- answers the right question for every case: absent, a
-    wheel/sdist install, an older pin, or a commit genuinely behind the
-    pin all correctly fall through to installing the pin.
+    An editable install (``pip install -e /local/checkout``) records
+    ``dir_info`` in ``direct_url.json``, not ``vcs_info`` -- checking only
+    ``vcs_info`` would fall through to "reinstall the pin" for an editable
+    sibling, silently replacing a developer's local checkout with a stale
+    git pin. That's a worse regression than the one this function exists
+    to prevent, so editable installs short-circuit to True first.
+
+    For a VCS install, ancestry -- not exact-tip equality -- is the only
+    check that's actually correct. Comparing against ``requested_revision``
+    alone (was it literally installed via "@main"?) can't tell "installed
+    from main a minute ago" apart from "installed from main months ago,
+    now stale relative to a newer pin" -- both report the same ref string
+    forever. Comparing against today's remote ``main`` tip for exact
+    equality over-corrects the other way: an install that's newer than the
+    pin but a few commits behind today's tip would then be wrongly treated
+    as stale and downgraded BACK to the pin. Only "is the installed commit
+    an ancestor of, or equal to, the pin's target" -- checked via GitHub's
+    compare API, no clone needed -- answers the right question for every
+    remaining case: absent, a wheel/sdist install, an older pin, or a
+    commit genuinely behind the pin all correctly fall through to
+    installing the pin.
     """
     try:
         dist = metadata.distribution(name)
@@ -99,6 +109,9 @@ def _installed_satisfies_pin(name: str, repo_url: str, pinned_ref: str) -> bool:
         info = json.loads(raw)
     except json.JSONDecodeError:
         return False
+    dir_info = info.get("dir_info") or {}
+    if dir_info.get("editable"):
+        return True
     vcs_info = info.get("vcs_info") or {}
     if vcs_info.get("vcs") != "git":
         return False

@@ -231,6 +231,22 @@ def test_installed_satisfies_pin_false_when_compare_api_unavailable() -> None:
             )
 
 
+def test_installed_satisfies_pin_true_for_editable_install_regardless_of_revision() -> None:
+    """An editable install (`pip install -e /local/checkout`) records
+    `dir_info`, not `vcs_info` -- must be trusted unconditionally (matching
+    how the sibling_hub branch above already trusts a local checkout
+    without ever checking its revision either), never silently replaced
+    by reinstalling the git pin."""
+    dist = MagicMock()
+    dist.read_text.return_value = json.dumps(
+        {"dir_info": {"editable": True}, "url": "file:///home/dev/market-data-hub"}
+    )
+    with patch("lazyportfolio._setup.metadata.distribution", return_value=dist):
+        assert (
+            _installed_satisfies_pin("market-data-hub", MARKET_DATA_HUB_GIT_URL, "abc123") is True
+        )
+
+
 def test_installed_satisfies_pin_false_when_not_a_git_install() -> None:
     vcs_info = {"vcs": "hg", "requested_revision": "main", "commit_id": "abc123"}
     dist = _fake_direct_url_dist(vcs_info)
