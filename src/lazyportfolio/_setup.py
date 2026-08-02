@@ -15,8 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from importlib import metadata
 from pathlib import Path
 
@@ -37,46 +40,50 @@ def _pip(*args: str) -> None:
     subprocess.run([sys.executable, "-m", "pip", *args], check=True)
 
 
-def _remote_main_commit(repo_url: str) -> str | None:
-    """The current commit SHA of ``repo_url``'s ``main`` branch, via a
-    lightweight ``git ls-remote`` (no clone/fetch). ``None`` if it can't be
-    determined (network unavailable, git missing, timeout) -- callers must
-    treat that as "unknown", never as "matches"."""
-    try:
-        result = subprocess.run(
-            ["git", "ls-remote", repo_url, "refs/heads/main"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+_GITHUB_URL_RE = re.compile(r"https://github\.com/([^/]+)/([^/.]+)(?:\.git)?/?$")
+
+
+def _github_compare_status(repo_url: str, base: str, head: str) -> str | None:
+    """GitHub's ahead/behind/identical/diverged status comparing
+    ``base...head`` via the (unauthenticated, no-clone) compare API.
+    ``base``/``head`` may be any git ref GitHub accepts -- a branch, tag,
+    or commit SHA. ``None`` if it can't be determined (non-GitHub URL,
+    network/API failure, rate limit, unknown ref) -- callers must treat
+    that as "unknown", never as "satisfies the pin"."""
+    match = _GITHUB_URL_RE.match(repo_url)
+    if not match:
         return None
-    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    return line.split()[0] if line else None
+    owner, repo = match.group(1), match.group(2)
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
+    try:
+        request = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+    status = payload.get("status")
+    return status if isinstance(status, str) else None
 
 
-def _installed_via_main_branch(name: str, repo_url: str) -> bool:
-    """True only if ``name`` was installed via a direct VCS reference to
-    ``repo_url``'s ``main`` branch AND the installed commit is (still)
-    exactly that branch's current tip.
+def _installed_satisfies_pin(name: str, repo_url: str, pinned_ref: str) -> bool:
+    """True only if ``name`` is installed via a direct git reference AND
+    its installed commit is at or after ``pinned_ref`` in ``repo_url``'s
+    history -- i.e. reinstalling the pin would not upgrade anything.
 
-    Checking ``direct_url.json``'s ``requested_revision`` alone is not
-    enough: it records the ref *string* ("main") requested at install
-    time, not whether that installation is still current -- a sibling
-    installed from ``@main`` months ago (before this repo's own pin was
-    last bumped) would report `requested_revision == "main"` forever,
-    even though its actual commit is now stale relative to the current
-    pin. These packages also don't bump ``version`` on every commit, so a
-    version-number comparison can't distinguish "installed from main a
-    minute ago" from "installed from main months ago" either -- both can
-    report the same version string. Comparing against the CURRENT remote
-    ``main`` tip (one cheap ``git ls-remote``, no clone) is the only check
-    that's actually correct: a package that's absent, installed from a
-    wheel/sdist, installed via any other ref (an older pin, a tag), or
-    whose recorded commit no longer matches the live remote tip all fall
-    through to installing the pin -- matching the original, always-safe
-    (if sometimes redundant) behavior.
+    Ancestry, not exact-tip equality, is the only check that's actually
+    correct here. Comparing against ``requested_revision`` alone (was it
+    literally installed via "@main"?) can't tell "installed from main a
+    minute ago" apart from "installed from main months ago, now stale
+    relative to a newer pin" -- both report the same ref string forever.
+    Comparing against today's remote ``main`` tip for exact equality
+    over-corrects the other way: an install that's newer than the pin but
+    a few commits behind today's tip would then be wrongly treated as
+    stale and downgraded BACK to the pin -- the exact bug this exists to
+    prevent. Only "is the installed commit an ancestor of, or equal to,
+    the pin's target" -- checked via GitHub's compare API, no clone
+    needed -- answers the right question for every case: absent, a
+    wheel/sdist install, an older pin, or a commit genuinely behind the
+    pin all correctly fall through to installing the pin.
     """
     try:
         dist = metadata.distribution(name)
@@ -93,13 +100,31 @@ def _installed_via_main_branch(name: str, repo_url: str) -> bool:
     except json.JSONDecodeError:
         return False
     vcs_info = info.get("vcs_info") or {}
-    if vcs_info.get("vcs") != "git" or vcs_info.get("requested_revision") != "main":
+    if vcs_info.get("vcs") != "git":
         return False
     installed_commit = vcs_info.get("commit_id")
     if not installed_commit:
         return False
-    current_main = _remote_main_commit(repo_url)
-    return current_main is not None and installed_commit == current_main
+    if installed_commit == pinned_ref:
+        return True
+    status = _github_compare_status(repo_url, pinned_ref, installed_commit)
+    return status in ("ahead", "identical")
+
+
+def _spec_ref(spec: str) -> str | None:
+    """Extract the pinned ref (tag or commit SHA) from a direct-reference
+    spec like ``name @ git+https://.../Repo.git@v1.2.3``. Splits on the
+    name/URL separator (" @ ") first, then looks for a further "@" inside
+    just the URL portion -- a bare, unpinned URL (no trailing "@ref") or a
+    plain version-constrained spec (no " @ " at all) both correctly
+    return ``None`` rather than misreading the name/URL separator itself
+    as a ref marker."""
+    if " @ " not in spec:
+        return None
+    url_part = spec.split(" @ ", 1)[1]
+    if "@" not in url_part:
+        return None
+    return url_part.rsplit("@", 1)[-1].strip() or None
 
 
 def _extra_requirements(extra: str, seen: set[str] | None = None) -> list[str]:
@@ -150,14 +175,6 @@ def _install_market_data_hub(sibling_hub: Path | None) -> None:
         _pip("install", "-e", str(sibling_hub))
         return
 
-    if _installed_via_main_branch("market-data-hub", MARKET_DATA_HUB_GIT_URL):
-        print(
-            "\nmarket-data-hub is already installed from its own main branch "
-            "-- leaving it as-is rather than reinstalling the older revision "
-            "pinned by the 'datacore' extra (which would silently downgrade it)."
-        )
-        return
-
     pinned_specs = _extra_requirements("datacore")
     if not pinned_specs:
         raise RuntimeError(
@@ -166,6 +183,17 @@ def _install_market_data_hub(sibling_hub: Path | None) -> None:
             "never happen for a normally-installed lazyportfolio; reinstall the "
             "package or report this as a bug."
         )
+
+    pinned_ref = _spec_ref(pinned_specs[0])
+    if pinned_ref and _installed_satisfies_pin(
+        "market-data-hub", MARKET_DATA_HUB_GIT_URL, pinned_ref
+    ):
+        print(
+            "\nmarket-data-hub is already installed at or after the pinned "
+            "revision -- leaving it as-is rather than reinstalling."
+        )
+        return
+
     _pip("install", *pinned_specs)
     print(
         f"\nNo local market-data-hub checkout found. Installed the pinned "
@@ -261,12 +289,8 @@ def _select_market_data_db(requested: str | None, sibling_hub: Path | None) -> s
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lazyportfolio-setup", description=__doc__)
-    parser.add_argument(
-        "--market-data-hub-path", help="Path to a local market-data-hub checkout"
-    )
-    parser.add_argument(
-        "--db-path", help="Skip the interactive prompt and use this .duckdb file"
-    )
+    parser.add_argument("--market-data-hub-path", help="Path to a local market-data-hub checkout")
+    parser.add_argument("--db-path", help="Skip the interactive prompt and use this .duckdb file")
     parser.add_argument(
         "--skip-tests",
         action="store_true",
@@ -321,8 +345,7 @@ def main(argv: list[str] | None = None) -> int:
             print("  (file does not exist yet - market-data-hub will create it on first run)")
     else:
         print(
-            '\nNo database configured. Set it later, e.g.: '
-            'setx MARKET_DATA_DB "<path-to.duckdb>"'
+            '\nNo database configured. Set it later, e.g.: setx MARKET_DATA_DB "<path-to.duckdb>"'
         )
 
     print()
