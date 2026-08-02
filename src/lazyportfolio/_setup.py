@@ -37,20 +37,46 @@ def _pip(*args: str) -> None:
     subprocess.run([sys.executable, "-m", "pip", *args], check=True)
 
 
-def _installed_via_main_branch(name: str) -> bool:
-    """True only if ``name`` was installed via a direct VCS reference to
-    that repo's ``main`` branch specifically (pip records this in the
-    installed distribution's ``direct_url.json``) -- e.g. this same setup
-    session's own ``pip install "name @ git+...@main"`` moments earlier.
+def _remote_main_commit(repo_url: str) -> str | None:
+    """The current commit SHA of ``repo_url``'s ``main`` branch, via a
+    lightweight ``git ls-remote`` (no clone/fetch). ``None`` if it can't be
+    determined (network unavailable, git missing, timeout) -- callers must
+    treat that as "unknown", never as "matches"."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", repo_url, "refs/heads/main"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    return line.split()[0] if line else None
 
-    Deliberately narrow: these packages don't bump their ``version`` on
-    every commit, so a version-number comparison can't tell "installed
-    from main a minute ago" apart from "installed from a stale pin two
-    months ago" -- both can report the same version string. A package
-    that's absent, installed from a wheel/sdist, or installed via any
-    OTHER ref (an older pin, a tag, a raw commit) is NOT treated as
-    current here, so the caller falls through to installing the pin --
-    matching the original, always-safe (if sometimes redundant) behavior.
+
+def _installed_via_main_branch(name: str, repo_url: str) -> bool:
+    """True only if ``name`` was installed via a direct VCS reference to
+    ``repo_url``'s ``main`` branch AND the installed commit is (still)
+    exactly that branch's current tip.
+
+    Checking ``direct_url.json``'s ``requested_revision`` alone is not
+    enough: it records the ref *string* ("main") requested at install
+    time, not whether that installation is still current -- a sibling
+    installed from ``@main`` months ago (before this repo's own pin was
+    last bumped) would report `requested_revision == "main"` forever,
+    even though its actual commit is now stale relative to the current
+    pin. These packages also don't bump ``version`` on every commit, so a
+    version-number comparison can't distinguish "installed from main a
+    minute ago" from "installed from main months ago" either -- both can
+    report the same version string. Comparing against the CURRENT remote
+    ``main`` tip (one cheap ``git ls-remote``, no clone) is the only check
+    that's actually correct: a package that's absent, installed from a
+    wheel/sdist, installed via any other ref (an older pin, a tag), or
+    whose recorded commit no longer matches the live remote tip all fall
+    through to installing the pin -- matching the original, always-safe
+    (if sometimes redundant) behavior.
     """
     try:
         dist = metadata.distribution(name)
@@ -67,7 +93,13 @@ def _installed_via_main_branch(name: str) -> bool:
     except json.JSONDecodeError:
         return False
     vcs_info = info.get("vcs_info") or {}
-    return vcs_info.get("vcs") == "git" and vcs_info.get("requested_revision") == "main"
+    if vcs_info.get("vcs") != "git" or vcs_info.get("requested_revision") != "main":
+        return False
+    installed_commit = vcs_info.get("commit_id")
+    if not installed_commit:
+        return False
+    current_main = _remote_main_commit(repo_url)
+    return current_main is not None and installed_commit == current_main
 
 
 def _extra_requirements(extra: str, seen: set[str] | None = None) -> list[str]:
@@ -118,7 +150,7 @@ def _install_market_data_hub(sibling_hub: Path | None) -> None:
         _pip("install", "-e", str(sibling_hub))
         return
 
-    if _installed_via_main_branch("market-data-hub"):
+    if _installed_via_main_branch("market-data-hub", MARKET_DATA_HUB_GIT_URL):
         print(
             "\nmarket-data-hub is already installed from its own main branch "
             "-- leaving it as-is rather than reinstalling the older revision "
