@@ -119,6 +119,7 @@ class HierarchicalV2Backtester:
         include_partial_last_period: bool = False,
         capture_audit_series: bool = False,
         max_workers: int = 1,
+        expanding: bool = False,
     ) -> V2BacktestReport:
         import pandas as pd
 
@@ -155,13 +156,19 @@ class HierarchicalV2Backtester:
         periods_per_year = _annualization_factor(estimation_frequency)
 
         # Phase 1 (sequential, cheap): resolve every valid fold's train/
-        # holding slices up front -- no solving happens here.
+        # holding slices up front -- no solving happens here. `expanding`
+        # controls the training window's shape: rolling (default) keeps it
+        # pinned to exactly train_size observations (`.tail(train_size)`),
+        # sliding forward each fold; expanding uses every observation up to
+        # the signal date, so the window only grows -- train_size is then
+        # just the minimum size before the first fold is emitted, not a cap.
         fold_specs: list[tuple[Any, Any, Any]] = []
         for index, signal in enumerate(schedule):
             next_signal = schedule[index + 1] if index + 1 < len(schedule) else None
             if next_signal is None and not include_partial_last_period:
                 continue
-            train = estimation.loc[estimation.index <= signal].tail(train_size)
+            available = estimation.loc[estimation.index <= signal]
+            train = available if expanding else available.tail(train_size)
             if len(train) < train_size:
                 continue
             holding_mask = valuation.index > signal
