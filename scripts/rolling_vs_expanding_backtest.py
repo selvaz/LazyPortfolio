@@ -21,8 +21,8 @@ the results are already durably saved to run_history by that point) via
 LazyTools' TelegramClient, using TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID from
 the environment (User-level env vars on this machine).
 
-Run: python scripts/rolling_vs_expanding_backtest.py [tree name]
-(default: Global Multi-Asset)
+Run: python scripts/rolling_vs_expanding_backtest.py [tree name ...]
+(default: Global Multi-Asset, Global Multi-Asset - TEV 7-10-5)
 """
 
 from __future__ import annotations
@@ -42,7 +42,10 @@ import tree_studio  # noqa: E402  (reuses _run_full_backtest/_v2_export_artifact
 
 from lazyportfolio.v2 import run_history, store  # noqa: E402
 
-DEFAULT_TREE = "Global Multi-Asset"
+DEFAULT_TREES = [
+    "Global Multi-Asset",
+    "Global Multi-Asset - TEV 7-10-5",
+]
 MAX_WORKERS = 4
 LAZYTOOLS_SRC = ROOT.parent / "LazyTools" / "src"
 
@@ -270,15 +273,19 @@ def run_variant(name: str, *, expanding: bool) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = argv or []
-    name = args[0] if args else DEFAULT_TREE
-    _log(f"=== rolling vs expanding backtest job starting for {name!r} ===")
-    rolling = run_variant(name, expanding=False)
-    expanding = run_variant(name, expanding=True)
-    _log(
-        "=== job complete === "
-        f"rolling: wall={rolling['wall_clock_seconds']:.1f}s folds={rolling['fold_count']} | "
-        f"expanding: wall={expanding['wall_clock_seconds']:.1f}s folds={expanding['fold_count']}"
-    )
+    names = args if args else DEFAULT_TREES
+    _log(f"=== rolling vs expanding backtest job starting for {names!r} ===")
+    for name in names:
+        rolling = run_variant(name, expanding=False)
+        expanding = run_variant(name, expanding=True)
+        _log(
+            f"=== {name!r} done === "
+            f"rolling: wall={rolling['wall_clock_seconds']:.1f}s "
+            f"folds={rolling['fold_count']} | "
+            f"expanding: wall={expanding['wall_clock_seconds']:.1f}s "
+            f"folds={expanding['fold_count']}"
+        )
+    _log("=== job complete ===")
     return 0
 
 
