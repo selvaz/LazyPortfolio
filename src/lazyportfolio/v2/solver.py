@@ -420,6 +420,41 @@ class V2LocalOptimizer:
             if constraints.max_tracking_error is not None
             else None
         )
+        if (
+            regime == "none"
+            and problem_class.objective == "max_return"
+            and target_periodic is None
+            and cap_periodic is None
+            and tev_periodic is None
+        ):
+            # Gate on the *resolved* target/cap/TEV values, not
+            # problem_class.volatility_mode / has_tev: those only look at
+            # constraints.volatility_target/max_volatility, which stay None
+            # for a father_proxy/benchmark-referenced target (the common
+            # case for non-root nodes) even though target_periodic above is
+            # then non-None. Gating on the raw classifier fields let the LP
+            # route fire on vol-constrained nodes and silently ignore the
+            # constraint.
+            lp_result = self._solve_lp_max_return(
+                names,
+                means,
+                lower,
+                upper,
+                covariance,
+                periods_per_year,
+                risk_aversion,
+                risk_free_rate,
+                constraints,
+                resolved_mean_estimator,
+                view_details,
+                problem_class.label,
+            )
+            if lp_result is not None:
+                return lp_result
+            # HiGHS failing (rare -- a well-posed LP with a bounded feasible
+            # region should always succeed) falls through to the audited
+            # SLSQP path below rather than raising, so an LP hiccup never
+            # aborts a solve the existing multi-start search could handle.
         start = self._initial_weights(names, lower, upper, reference_weights)
         hard_constraints: list[dict[str, Any]] = [
             {"type": "eq", "fun": lambda weights: float(weights.sum() - 1.0)}
@@ -705,6 +740,111 @@ class V2LocalOptimizer:
                 if projected
                 else ""
             ),
+        )
+        return dict(zip(names, weights, strict=True)), audit
+
+    @staticmethod
+    def _solve_lp_max_return(
+        names: list[str],
+        means: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        covariance: np.ndarray,
+        periods_per_year: float,
+        risk_aversion: float,
+        risk_free_rate: float,
+        constraints: V2Constraints,
+        resolved_mean_estimator: str,
+        view_details: tuple[dict[str, Any], ...],
+        problem_class_label: str,
+    ) -> tuple[dict[str, float], V2Audit] | None:
+        """Exact LP fast path: ``objective='max_return'``, no vol target/cap,
+        no TEV, no financing, only budget + box bounds -- v3 performance
+        roadmap Phase B (docs/hierarchical-optimizer-performance-plan.md).
+        A linear objective over linear equality/bound constraints is a
+        well-posed LP; HiGHS (``scipy.optimize.linprog``) is an exact global
+        solver for it, unlike SLSQP's non-convex multi-start heuristic, so
+        this route can honestly claim global optimality.
+
+        Returns ``None`` (never raises) if HiGHS doesn't report success, so
+        the caller falls back to the audited SLSQP path rather than
+        silently accept a non-optimal result.
+        """
+        from scipy.optimize import linprog
+
+        started = time.perf_counter()
+        result = linprog(
+            c=-means,
+            A_eq=[np.ones(len(names))],
+            b_eq=[1.0],
+            bounds=list(zip(lower, upper, strict=True)),
+            method="highs",
+        )
+        solve_seconds = time.perf_counter() - started
+        if not result.success:
+            return None
+
+        weights = np.asarray(result.x, dtype=float)
+        weights[np.abs(weights) < 1e-10] = 0.0
+        total = weights.sum()
+        if total <= 0.0:
+            return None
+        weights /= total
+        annualizer = sqrt(periods_per_year)
+        actual_vol = (
+            float(sqrt(max(float(weights @ covariance @ weights), 0.0))) * annualizer
+        )
+        expected_return_annualized = float(means @ weights) * periods_per_year
+        posterior_all = (
+            constraints.view_covariance_policy == "posterior_all" and bool(constraints.views)
+        )
+        audit = V2Audit(
+            target_reference="none",
+            target_volatility=None,
+            actual_volatility=actual_vol,
+            cap_reference="none",
+            volatility_cap=None,
+            tracking_error_limit=None,
+            actual_tracking_error=None,
+            minimum_slack={
+                name: float(weights[index] - lower[index]) for index, name in enumerate(names)
+            },
+            maximum_slack={
+                name: float(upper[index] - weights[index]) for index, name in enumerate(names)
+            },
+            sum_weights=float(weights.sum()),
+            solver_message=str(result.message),
+            target_status="not_requested",
+            tracking_error_status="not_requested",
+            configured_objective="max_return",
+            effective_objective="max_return",
+            expected_return_annualized=expected_return_annualized,
+            objective_value=expected_return_annualized,
+            soft_constraint_violation=0.0,
+            configured_mean_estimator=constraints.mean_estimator,
+            resolved_mean_estimator=resolved_mean_estimator,
+            views_applied=len(view_details),
+            view_details=view_details,
+            risk_aversion=risk_aversion,
+            risk_free_rate=risk_free_rate,
+            covariance_estimator=constraints.covariance_estimator,
+            covariance_estimator_class={
+                "shrunk_fixed": "ShrunkCovariance",
+                "ledoit_wolf": "LedoitWolf",
+            }[constraints.covariance_estimator],
+            risk_covariance_role="posterior" if posterior_all else "prior",
+            objective_covariance_role="posterior" if posterior_all else "prior",
+            view_covariance_policy=constraints.view_covariance_policy,
+            volatility_target_mode=constraints.volatility_target_mode,
+            global_optimality_claim=True,
+            solver_strategy="lp_highs",
+            restart_candidate_count=1,
+            restart_objective_spread=0.0,
+            problem_class=problem_class_label,
+            solver_status="ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason="",
         )
         return dict(zip(names, weights, strict=True)), audit
 
