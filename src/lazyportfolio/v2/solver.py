@@ -1064,7 +1064,7 @@ class V2LocalOptimizer:
         reoptimized away by a later stage.
         """
 
-        from scipy.optimize import minimize
+        from scipy.optimize import OptimizeResult, minimize
 
         bounds = list(zip(lower, upper, strict=True))
         stage_constraints = list(hard_constraints)
@@ -1263,6 +1263,31 @@ class V2LocalOptimizer:
                     }
                 )
                 return best
+
+        # A nearest-feasible volatility witness is already a valid portfolio:
+        # Stage B found it under every hard constraint (and under the fixed
+        # TEV bound, when one exists).  SLSQP can nevertheless fail to make
+        # further economic progress inside the intentionally tiny band around
+        # that witness.  That numerical failure must not abort a walk-forward
+        # fold after the user explicitly chose best-effort target handling.
+        # Return the proven feasible witness, preserving the closest-volatility
+        # result and making the lack of Stage-C improvement auditable.
+        if volatility_target_policy == "nearest_feasible" and dev_weights is not None:
+            stage_results.append(
+                {
+                    "stage": "objective",
+                    "status": "nearest_feasible_witness",
+                    "note": (
+                        "economic refinement failed inside the resolved "
+                        "volatility band; returned the Stage-B feasible witness"
+                    ),
+                }
+            )
+            return OptimizeResult(
+                x=np.asarray(dev_weights, dtype=float),
+                success=True,
+                message="nearest-feasible volatility witness",
+            )
 
         raise V2OptimizationError(
             "the economic objective could not be optimized subject to the "
