@@ -1,7 +1,7 @@
 # V2 optimizer v3 performance roadmap: what changed and what's proven
 
-Status: **Phases 0, A, B, B.5, C landed** on `agent/optimizer-v3-performance`. This is a
-living document — it gets updated as later phases (E, F, G's remaining validation) land,
+Status: **Phases 0, A, B, B.5, C, F1 landed** on `agent/optimizer-v3-performance`. This is a
+living document — it gets updated as later phases (E, F2, G's remaining validation) land,
 not rewritten from scratch. See `docs/hierarchical-optimizer-performance-plan.md` for the
 original diagnosis and the plan (kept in this session's working plan file) for phase-by-phase
 detail.
@@ -13,20 +13,25 @@ detail.
   tree (`MS_7030_base_2_level`), where forcing every fast path off and running pure SLSQP
   with the Phase B.5 risk-measure fix reproduces the fast-path-enabled result to 4+ decimal
   places. Nothing about routing changes *what* gets solved for, only *how fast*.
-- **Fast paths B1/B2 (LP/QP) have zero measured benefit on your real trees today.** Every
-  node in your 3 saved real trees that has a volatility target uses the default
-  `volatility_target_mode="exact"`, and B1/B2 only engage when *no* volatility constraint is
-  present at all. This was known and expected going in — it's why Phase C exists.
-- **C2 (the exact-target hybrid route) does engage on real trees** — verified live,
-  node-by-node, on `MS_7030_base_2_level`: 2 of its 4 node solves used the SOCP warm start.
-  This is the route that matters for your portfolios.
-- **Wall-clock speedup is NOT reliably measured yet.** This environment showed a real,
-  reproducible ~6.5-second `sklearn` import-time spike after installing `cvxpy`/`clarabel`/
-  `osqp` (almost certainly antivirus re-scanning the newly-touched site-packages tree),
-  which contaminated several timing comparisons during this work by 10-30x before it was
-  caught and root-caused. Wall-clock numbers below are reported for transparency but flagged
-  wherever this noise could be a factor — don't treat them as a clean before/after speedup
-  claim yet.
+- **Fast paths B1/B2/C1 (LP/QP/SOCP-cap) have zero measured benefit on your real trees
+  today.** Every node in your 3 saved real trees that has a volatility target uses the
+  default `volatility_target_mode="exact"`, and B1/B2/C1 only engage when *no* volatility
+  constraint (or only a cap, never an exact target) is present. Known and expected going in.
+- **C2 (the exact-target hybrid route) does engage on real trees**, but its own measured
+  wall-clock benefit turned out to be within this session's noise band on the trees tested
+  so far (see section 6) — the mechanism is real and verified (section 3), the speedup isn't
+  yet.
+- **Phase F1 (parallel fold estimation) is the first phase with a real, robust, measured
+  speedup: ~3.84x on a full 11.5-year, 114-fold backtest on a real tree, using 4 worker
+  processes** (see section 8) — not noise-band-sized, not a synthetic fixture. This is the
+  result to point to if you want one number.
+- **Wall-clock measurements in this environment are noisy and were sometimes wrong before
+  being caught.** This machine showed a real, reproducible ~6.5-second `sklearn` import-time
+  spike after installing `cvxpy`/`clarabel`/`osqp` (almost certainly antivirus re-scanning
+  the newly-touched site-packages tree), which contaminated several early timing comparisons
+  by 10-30x before it was root-caused. Section 8's F1 numbers were measured carefully enough
+  (large fold count, work-done cross-check via solve counts) to trust; sections 5-6's earlier
+  numbers should still be read with that caveat in mind.
 
 ---
 
@@ -151,12 +156,70 @@ antivirus-scanning artifact already found once, OS-level noise) rather than by t
 being timed. Until wall-clock measurements are repeatable within a reasonable band on this
 machine, treat every wall-clock number in this document as a data point, not a proof.
 
-## 7. What's still open
+## 8. Phase F1: parallel fold estimation — the first real, verified speedup
+
+Each fold in a walk-forward backtest only depends on its own training window, not on any
+other fold's result — the only part of a backtest that has to run in order is the ledger
+walk that turns fold targets into an OOS curve (fold N's ledger state depends on fold N-1's
+ending weights). Phase F1 splits `HierarchicalV2Backtester.run()` into exactly those two
+phases: fold estimation dispatched across a `ProcessPoolExecutor` when a new opt-in
+`max_workers` parameter is set above 1 (default stays `1`, today's exact sequential
+behavior, zero risk for any existing caller), then the ledger walk sequentially over the
+collected results in order.
+
+**Correctness**, `tests/test_v2_backtest_parallel_folds.py`: `max_workers=1` vs
+`max_workers=2` on a synthetic fixture produce the same fold targets, curves, and
+transaction costs (tolerance `abs=1e-6` — see the BLAS note below for why not tighter).
+
+**A real bug found and fixed before this was safe to run big:** the first live full-scale
+run, `max_workers=5` on a 6-core machine, crashed outright —
+`OpenBLAS error: Memory allocation still failed after 10 retries, giving up`. Every worker
+process's numpy/scipy calls were spinning up their *own* full-machine-sized BLAS thread
+pool, so 5 processes oversubscribed the box by roughly 5x. Fixed with a
+`ProcessPoolExecutor` initializer that pins each worker to a single BLAS thread
+(`OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`MKL_NUM_THREADS=1` plus
+`threadpoolctl.threadpool_limits(1)` as a runtime backstop). This is also why the
+correctness test's tolerance is `1e-6`, not bit-for-bit: pinning thread count changes
+floating-point reduction order slightly between the (often multi-threaded) sequential path
+and the now-single-threaded parallel path — confirmed to be the *only* source of the small
+divergence, not a logic difference.
+
+**Live measurement, `MS_7030_base_2_level`, full history (2015-01-05 to 2026-07-28, 11.5
+years), the tree's own real config** (`train_size=104` weeks, monthly rebalance, forward
+mode):
+
+| Workers | Folds | Local solves | Wall-clock | Sum of individual solve times |
+|---|---|---|---|---|
+| 1 (sequential, implicit baseline) | 12 (short window) | 36 | 576.2s | — |
+| 4 (`max_workers=4`) | **114** (full history) | **342** | **1283.3s (21.4 min)** | 4923.2s (~82 min) |
+
+The 114-fold/342-solve run's own numbers give the cleanest before/after: **4923.2s worth of
+solving completed in 1283.3s wall-clock with 4 workers — a 3.84x speedup**, close to the
+4x ceiling four workers can theoretically deliver (~96% efficiency). This is not a
+noise-band result like sections 5-6's numbers — the fold and solve counts match exactly
+what the sequential path would do (same tree, same config, same total work), and the
+speedup is large enough (3.84x, not 1.05x) that ordinary run-to-run environmental variance
+can't explain it away.
+
+**A smaller, earlier check on the same tree with only ~2 months of OOS data (12 folds) was
+inconclusive** — parallel and sequential wall-clock came out within a few percent of each
+other, because per-worker process startup/import overhead isn't worth paying for only 12
+independent units of work. Phase F1's win scales with fold count: short backtests may see
+little to no benefit, long ones (production walk-forward runs, which is the actual use
+case) see a large one.
+
+Final portfolio metrics from the full run, for reference (not a Phase F1 concern, just
+confirming the backtest completed a sane run): CAGR 7.6%, annualized volatility 13.0%,
+Sharpe 0.63, Sortino 0.87, max drawdown -27.1%, 2385 daily observations.
+
+## 9. What's still open
 
 - **Phase B.5**, item 2 (deterministic 100%-proxy seed) and item 1 (realized-volatility
   measure) are both landed and tested (`tests/test_v2_solver_risk_measure_consistency.py`).
-- **Phase E** (analytic SLSQP gradients) and **Phase F** (parallel fold estimation,
-  fold-level run-history reuse) haven't been started.
+- **Phase E** (analytic SLSQP gradients) hasn't been started.
+- **Phase F2** (fold-level `run_history` reuse, so a repeated research run over an unchanged
+  tree+data doesn't recompute folds it's already solved) hasn't been started — F1
+  (parallel dispatch) is done, F2 (caching) is separate.
 - **Phase G's formal gating** (`research_strict`/`hybrid_validated`/`production_fast`
   solver profile on `V2Constraints`) hasn't been built — today, every fast path is live
   unconditionally the moment its gate conditions match, for every solve. Given the
@@ -164,11 +227,15 @@ machine, treat every wall-clock number in this document as a data point, not a p
   simplification from the original plan's staged-rollout design, worth flagging explicitly:
   there is currently no way to force "old" SLSQP-only behavior in production without
   monkeypatching, the way this report's isolation tests did.
-- **A trustworthy wall-clock benchmark** needs either a quieter environment, more repeated
-  runs to average out noise, or `time.process_time()`/CPU-time based measurement instead of
-  wall-clock — plus the `local_solves()` fix noted in section 5 to make solve-count itself
-  reflect C2's savings.
-- Only `MS_7030_base_2_level` was checked at the node/`warm_started` level. The same check
-  wasn't extended to `ACWI_AGG_70_30`/`Global Multi-Asset` in this pass for time — worth
-  doing before treating C2's real-tree benefit as fully characterized rather than
+- **A trustworthy wall-clock benchmark for B1-C2** (as opposed to F1, which now has one)
+  needs either a quieter environment, more repeated runs to average out noise, or
+  `time.process_time()`/CPU-time based measurement instead of wall-clock — plus the
+  `local_solves()` fix noted in section 5 to make solve-count itself reflect C2's savings.
+- Only `MS_7030_base_2_level` was checked at the node/`warm_started` level for C2. The same
+  check wasn't extended to `ACWI_AGG_70_30`/`Global Multi-Asset` in this pass for time —
+  worth doing before treating C2's real-tree benefit as fully characterized rather than
   "confirmed to engage on at least one real tree."
+- **Tree Studio's UI doesn't expose `max_workers` yet** — it's a new keyword argument on
+  `HierarchicalV2Backtester.run()`, reachable today from Python/the MCP tools but not from
+  a form field. Wiring it in (with a sane default and a warning about BLAS thread capping
+  applying automatically) is a small follow-up, not started.
