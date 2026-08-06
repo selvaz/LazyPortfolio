@@ -85,6 +85,15 @@ def test_parallel_folds_match_sequential_exactly(mode: str) -> None:
         max_workers=2,
     )
 
+    # abs=1e-6, not bit-for-bit: the parallel path pins each worker to a
+    # single BLAS thread (_limit_worker_blas_threads, needed to avoid
+    # oversubscribing the machine -- verified live, 5 workers without this
+    # crashed OpenBLAS on a 6-core box), while the sequential path keeps
+    # the process's own default (often multi-threaded) BLAS. Different
+    # thread counts change floating-point reduction order slightly; this
+    # tolerance confirms that's the only source of divergence, not a real
+    # logic difference between the two code paths.
+    tolerance = 1e-6
     assert len(sequential.folds) == len(parallel.folds) >= 2
     for seq_fold, par_fold in zip(sequential.folds, parallel.folds, strict=True):
         assert seq_fold.signal == par_fold.signal
@@ -92,15 +101,18 @@ def test_parallel_folds_match_sequential_exactly(mode: str) -> None:
         for arm in seq_fold.targets:
             for name in seq_fold.targets[arm]:
                 assert seq_fold.targets[arm][name] == pytest.approx(
-                    par_fold.targets[arm][name], abs=1e-10
+                    par_fold.targets[arm][name], abs=tolerance
                 )
     assert set(sequential.curves) == set(parallel.curves)
     for arm in sequential.curves:
         pd.testing.assert_series_equal(
-            sequential.curves[arm], parallel.curves[arm], check_exact=False, atol=1e-10
+            sequential.curves[arm],
+            parallel.curves[arm],
+            check_exact=False,
+            atol=tolerance,
         )
     assert sequential.transaction_cost_paid == pytest.approx(
-        parallel.transaction_cost_paid, abs=1e-10
+        parallel.transaction_cost_paid, abs=tolerance
     )
 
 

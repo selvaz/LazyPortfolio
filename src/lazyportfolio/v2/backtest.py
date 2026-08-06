@@ -26,6 +26,27 @@ from lazyportfolio.v2.moments import (
 )
 
 
+def _limit_worker_blas_threads() -> None:
+    """``ProcessPoolExecutor`` initializer: cap each worker to a single BLAS
+    thread.
+
+    Without this, every worker process's numpy/scipy calls spin up their
+    *own* OpenBLAS thread pool sized to the machine's full core count -- N
+    worker processes x M BLAS threads each oversubscribes the machine by
+    N*M threads competing for N*M cores' worth of work. Verified live: 5
+    workers on a 6-core machine crashed with "OpenBLAS error: Memory
+    allocation still failed after 10 retries, giving up" (each worker's
+    BLAS pool alone tried to claim most of the machine). Setting the
+    env vars here (before any worker imports numpy -- this initializer
+    runs first) plus threadpool_limits at call time (belt-and-suspenders
+    for whichever BLAS build honors runtime limits vs import-time-only env
+    vars) keeps each worker single-threaded, so the process-level
+    parallelism from Phase F1 is the only parallelism in play.
+    """
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[var] = "1"
+
+
 def _estimate_fold(
     model: V2Model, train: Any, mode: Mode, periods_per_year: float
 ) -> V2Estimate:
@@ -36,9 +57,12 @@ def _estimate_fold(
     process (Windows uses the "spawn" start method, no fork) starts fresh
     with no inherited parent state to reuse anyway.
     """
-    return HierarchicalV2Estimator().estimate(
-        model, train, mode=mode, periods_per_year=periods_per_year
-    )
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=1):
+        return HierarchicalV2Estimator().estimate(
+            model, train, mode=mode, periods_per_year=periods_per_year
+        )
 
 
 class _V2Ledger:
@@ -161,7 +185,9 @@ class HierarchicalV2Backtester:
         estimates: list[V2Estimate] = []
         if max_workers > 1 and len(fold_specs) > 1:
             worker_count = min(max_workers, len(fold_specs), os.cpu_count() or 1)
-            with ProcessPoolExecutor(max_workers=worker_count) as pool:
+            with ProcessPoolExecutor(
+                max_workers=worker_count, initializer=_limit_worker_blas_threads
+            ) as pool:
                 futures = [
                     pool.submit(_estimate_fold, model, train, mode, periods_per_year)
                     for _, train, _ in fold_specs
