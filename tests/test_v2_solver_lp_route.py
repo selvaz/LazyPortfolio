@@ -121,13 +121,21 @@ def test_lp_route_skipped_when_volatility_target_is_set() -> None:
 
 
 def test_lp_route_skipped_when_volatility_cap_is_set() -> None:
+    # max_return + a volatility cap is not the LP route's (linear-only)
+    # problem, but it *is* Phase C1's convex SOCP problem, so this may now
+    # legitimately route to "socp_clarabel" instead of falling all the way
+    # to SLSQP when cvxpy/clarabel are installed -- the LP route itself must
+    # still never fire here, which is what this test actually guards.
     returns = _returns()
     constraints = V2Constraints(max_volatility_reference="manual", max_volatility=0.15)
     _, audit = V2LocalOptimizer().solve(returns, **_solve_kwargs(constraints))
-    assert audit.solver_strategy == "slsqp_multistart_audited"
+    assert audit.solver_strategy != "lp_highs"
 
 
 def test_lp_route_skipped_when_tracking_error_limit_is_set() -> None:
+    # See test_lp_route_skipped_when_volatility_cap_is_set: a TEV limit is
+    # also within Phase C1's SOCP problem shape, so SLSQP is no longer the
+    # only legitimate fallback here -- only the LP route itself is excluded.
     returns = _returns()
     rng = np.random.default_rng(1)
     father = pd.Series(rng.normal(0.0004, 0.009, len(returns)), index=returns.index)
@@ -144,7 +152,7 @@ def test_lp_route_skipped_when_tracking_error_limit_is_set() -> None:
         tracking_reference_series=father,
         reference_weights=None,
     )
-    assert audit.solver_strategy == "slsqp_multistart_audited"
+    assert audit.solver_strategy != "lp_highs"
 
 
 def test_lp_route_skipped_when_financing_is_enabled() -> None:

@@ -145,8 +145,8 @@ def test_nearest_feasible_returns_volatility_witness_when_refinement_fails(monke
     """A best-effort volatility target must not abort solely because Stage C
     cannot refine the already-proven feasible Stage-B witness."""
 
-    from scipy.optimize import OptimizeResult
     import scipy.optimize
+    from scipy.optimize import OptimizeResult
 
     witness = np.array([0.40, 0.60])
 

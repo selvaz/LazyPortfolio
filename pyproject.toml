@@ -28,7 +28,7 @@ datacore = ["market-data-hub @ git+https://github.com/selvaz/market-data-hub.git
 # Phase B/C). Optional: solver.py imports each backend lazily inside the
 # route function that needs it, so the package stays usable without them --
 # every route falls back to the audited SLSQP path if its backend is absent.
-solvers = ["osqp>=1.0"]
+solvers = ["osqp>=1.0", "cvxpy>=1.4", "clarabel>=0.6"]
 test = ["lazyportfolio[datacore]", "lazyportfolio[solvers]", "pytest>=8.2", "pytest-asyncio>=0.23", "pytest-cov>=5.0"]
 dev = ["lazyportfolio[test]", "ruff>=0.6", "mypy>=1.10"]
 
