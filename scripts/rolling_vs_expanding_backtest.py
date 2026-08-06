@@ -15,6 +15,12 @@ available history -- meant to run unattended (e.g. via Windows Task
 Scheduler overnight) since a full multi-year run can take 15-40+ minutes
 per methodology.
 
+Each variant's real Tree Studio client report is also sent as a Telegram
+document (best-effort -- a delivery failure is logged, never fatal, since
+the results are already durably saved to run_history by that point) via
+LazyTools' TelegramClient, using TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID from
+the environment (User-level env vars on this machine).
+
 Run: python scripts/rolling_vs_expanding_backtest.py [tree name]
 (default: Global Multi-Asset)
 """
@@ -32,17 +38,47 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "project"))
 
-import tree_studio  # noqa: E402  (reuses _v2_inputs/_config_hash/_data_fingerprint)
+import tree_studio  # noqa: E402  (reuses _run_full_backtest/_v2_export_artifacts/_config_hash)
 
-from lazyportfolio.hierarchical_v2 import HierarchicalV2Backtester  # noqa: E402
 from lazyportfolio.v2 import run_history, store  # noqa: E402
 
 DEFAULT_TREE = "Global Multi-Asset"
 MAX_WORKERS = 4
+LAZYTOOLS_SRC = ROOT.parent / "LazyTools" / "src"
 
 
 def _log(message: str) -> None:
     print(f"[{datetime.now(UTC).isoformat()}] {message}", flush=True)
+
+
+def _send_telegram_document(*, content: bytes, filename: str, caption: str) -> None:
+    """Best-effort delivery -- an unattended overnight run must never lose
+    the backtest results (already durably saved to run_history at this
+    point) just because Telegram is unreachable or credentials are
+    missing. Logs and returns instead of raising.
+    """
+    import os
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        _log("Telegram: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set, skipping send")
+        return
+    if str(LAZYTOOLS_SRC) not in sys.path:
+        sys.path.insert(0, str(LAZYTOOLS_SRC))
+    try:
+        from lazytools.connectors.telegram.client import TelegramClient
+
+        client = TelegramClient.from_token(token)
+        try:
+            client.send_document(
+                chat_id=chat_id, document=content, filename=filename, caption=caption
+            )
+        finally:
+            client.close()
+        _log(f"Telegram: sent {filename!r} ({len(content)} bytes)")
+    except Exception as exc:  # noqa: BLE001 -- best-effort notification, never fatal
+        _log(f"Telegram: send failed ({type(exc).__name__}: {exc}), continuing anyway")
 
 
 def _metrics_table_html(metrics: dict[str, dict[str, Any]]) -> str:
@@ -109,32 +145,35 @@ def _build_report_html(
 
 
 def run_variant(name: str, *, expanding: bool) -> dict[str, Any]:
+    """Run one methodology and attach TWO artifacts to its run_history row:
+    the real Tree Studio client report (``kind="report"``, built by
+    ``tree_studio._v2_export_artifacts`` -- the exact same
+    ``build_client_report`` output the app itself would produce for this
+    config, not a reimplementation) and a lightweight ``kind="summary"``
+    comparison table for a fast side-by-side glance without opening both
+    full reports.
+
+    Calls ``tree_studio._run_full_backtest`` directly (not
+    ``HierarchicalV2Backtester().run()``) so the walk-forward computation
+    happens exactly once per config/expanding combination -- the later
+    ``_v2_export_artifacts`` call hits ``_run_full_backtest``'s own
+    in-memory cache (same config_hash/data_fingerprint/expanding key)
+    instead of re-running the backtest a second time.
+    """
     label = "expanding" if expanding else "rolling"
     config = store.read_model(name)
-    model, dataset = tree_studio._v2_inputs(config)
     config_hash = tree_studio._config_hash(config)
     data_as_of, data_fingerprint = tree_studio._data_fingerprint(config)
     backtest = config.get("backtest", {}) or {}
     train_size = int(backtest.get("train_size") or 104)
-    estimation_frequency = str(backtest.get("estimation_frequency") or "W")
-    mode = "forward" if backtest.get("forward_enabled", True) else "flat"
 
     _log(
-        f"{name!r} [{label}]: starting -- range {dataset.returns.index.min().date()} "
-        f"to {dataset.returns.index.max().date()}, train_size={train_size}, mode={mode}"
+        f"{name!r} [{label}]: starting -- train_size={train_size}, "
+        f"max_workers={MAX_WORKERS}"
     )
     started = time.perf_counter()
-    report = HierarchicalV2Backtester().run(
-        model,
-        dataset.returns,
-        mode=mode,
-        train_size=train_size,
-        estimation_frequency=estimation_frequency,
-        rebalance_frequency="M",
-        transaction_cost_bps=0.0,
-        capture_audit_series=False,
-        max_workers=MAX_WORKERS,
-        expanding=expanding,
+    model, dataset, report = tree_studio._run_full_backtest(
+        config, capture_audit_series=False, max_workers=MAX_WORKERS, expanding=expanding
     )
     wall = time.perf_counter() - started
     solve_count = sum(
@@ -170,7 +209,41 @@ def run_variant(name: str, *, expanding: bool) -> dict[str, Any]:
         metrics={k: v for k, v in payload.items() if k not in ("metrics", "terminal_weights")},
         payload=payload,
     )
-    report_html = _build_report_html(
+
+    export_started = time.perf_counter()
+    artifacts = tree_studio._v2_export_artifacts(
+        config, kind="report", max_workers=MAX_WORKERS, expanding=expanding
+    )
+    client_blob, client_content_type, _client_filename = artifacts["report"]
+    export_wall = time.perf_counter() - export_started
+    run_history.attach_artifact(
+        run_id,
+        kind="report",
+        content_type=client_content_type,
+        filename=f"{store.sanitize_model_name(name)}_{label}_client_report.html",
+        blob=client_blob,
+    )
+    _log(
+        f"{name!r} [{label}]: real Tree Studio client report attached "
+        f"({len(client_blob)} bytes, +{export_wall:.1f}s -- cheap, hit the "
+        f"_run_full_backtest cache from above)"
+    )
+    final_metrics = report.metrics.get("FINAL", {})
+    caption = (
+        f"{name} -- {label} window\n"
+        f"{len(report.folds)} folds, {wall:.0f}s wall-clock, {MAX_WORKERS} workers\n"
+        f"CAGR {final_metrics.get('cagr', 0):.2%} | "
+        f"vol {final_metrics.get('annualized_volatility', 0):.2%} | "
+        f"Sharpe {final_metrics.get('annualized_sharpe', 0):.2f} | "
+        f"max DD {final_metrics.get('max_drawdown', 0):.2%}"
+    )
+    _send_telegram_document(
+        content=client_blob,
+        filename=f"{store.sanitize_model_name(name)}_{label}_client_report.html",
+        caption=caption,
+    )
+
+    summary_html = _build_report_html(
         tree_name=name,
         window_mode=label,
         wall_seconds=wall,
@@ -186,12 +259,12 @@ def run_variant(name: str, *, expanding: bool) -> dict[str, Any]:
     )
     run_history.attach_artifact(
         run_id,
-        kind="report",
+        kind="summary",
         content_type="text/html",
-        filename=f"{store.sanitize_model_name(name)}_{label}_report.html",
-        blob=report_html.encode("utf-8"),
+        filename=f"{store.sanitize_model_name(name)}_{label}_summary.html",
+        blob=summary_html.encode("utf-8"),
     )
-    _log(f"{name!r} [{label}]: recorded run_id={run_id}, HTML report attached")
+    _log(f"{name!r} [{label}]: recorded run_id={run_id}, both artifacts attached")
     return payload
 
 
