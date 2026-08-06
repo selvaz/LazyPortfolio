@@ -34,6 +34,7 @@ def tree_studio(monkeypatch, tmp_path):
 def _config() -> dict[str, object]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

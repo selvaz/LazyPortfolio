@@ -18,6 +18,7 @@ def _model() -> V2Model:
     return V2Model.from_config(
         {
             "root_id": "root",
+            "currency": "USD",
             "nodes": [
                 {
                     "id": "root",

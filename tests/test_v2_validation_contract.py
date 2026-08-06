@@ -39,6 +39,7 @@ from lazyportfolio.v2.validation import (
 def _config(constraints: object | None = None) -> dict[str, object]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

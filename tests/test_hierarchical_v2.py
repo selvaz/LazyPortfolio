@@ -178,6 +178,7 @@ def test_backward_root_uses_raw_benchmark_and_exposes_synthetic_diagnostic() -> 
             name="B0",
             weights={"ticker:EQUITY": 0.7, "ticker:BOND": 0.3},
         ),
+        reference_currency="USD",
     )
 
     estimate = HierarchicalV2Estimator().estimate(
@@ -252,6 +253,7 @@ def _hierarchical_fixture() -> tuple[V2Model, pd.DataFrame]:
             name="B0",
             weights={"ticker:EQUITY": 0.7, "ticker:BOND": 0.3},
         ),
+        reference_currency="USD",
     )
     return model, returns
 
@@ -259,6 +261,7 @@ def _hierarchical_fixture() -> tuple[V2Model, pd.DataFrame]:
 def test_model_from_config_normalizes_full_contract() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -598,6 +601,7 @@ def test_estimate_moments_explicit_method_overrides_auto_selection() -> None:
 def test_model_from_config_parses_mean_estimator_per_node() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -613,6 +617,7 @@ def test_model_from_config_parses_mean_estimator_per_node() -> None:
 
     default_config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [{"id": "root", "proxy": "", "instruments": ["ACWI"], "constraints": {}}],
         "backtest": {"benchmark": {"weights": {"ACWI": 1.0}}},
     }
@@ -717,6 +722,7 @@ def test_apply_views_rejects_invalid_input() -> None:
 def test_model_from_config_parses_views_per_node() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -755,6 +761,7 @@ def test_model_from_config_parses_views_per_node() -> None:
 
     default_config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [{"id": "root", "proxy": "", "instruments": ["ACWI"], "constraints": {}}],
         "backtest": {"benchmark": {"weights": {"ACWI": 1.0}}},
     }
@@ -767,6 +774,7 @@ def test_model_from_config_treats_empty_string_view_tau_as_default() -> None:
     """A GUI payload sends '' (not a missing key) for an unset optional field."""
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -969,6 +977,7 @@ def test_hrp_rejects_constraints_it_would_otherwise_silently_ignore() -> None:
 def test_model_from_config_parses_risk_aversion_and_risk_free_rate() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -985,6 +994,7 @@ def test_model_from_config_parses_risk_aversion_and_risk_free_rate() -> None:
 
     default_config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [{"id": "root", "proxy": "", "instruments": ["ACWI"], "constraints": {}}],
         "backtest": {"benchmark": {"weights": {"ACWI": 1.0}}},
     }

@@ -10,6 +10,7 @@ from lazyportfolio import V2Model
 def _config() -> dict[str, object]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

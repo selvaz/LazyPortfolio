@@ -36,6 +36,7 @@ PROJECT_DIR = REPO_ROOT / "project"
 def _config() -> dict[str, Any]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

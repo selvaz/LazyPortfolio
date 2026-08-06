@@ -19,6 +19,7 @@ from lazyportfolio.v2.validation import normalize_config
 class V2Model:
     root: V2Node
     benchmark: V2Benchmark
+    reference_currency: str
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> V2Model:
@@ -170,6 +171,7 @@ class V2Model:
                     for key, value in benchmark_raw["weights"].items()
                 },
             ),
+            reference_currency=str(normalized["currency"]),
         )
 
 
