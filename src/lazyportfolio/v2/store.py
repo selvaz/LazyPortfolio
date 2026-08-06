@@ -21,7 +21,7 @@ import os
 import re
 from contextlib import closing
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -76,7 +76,9 @@ def sanitize_model_name(name: Any) -> str:
 def list_saved_models(*, store_path: str | os.PathLike[str] | None = None) -> list[dict[str, str]]:
     """List saved models as ``{"name", "updated_at"}`` pairs, newest first."""
     with closing(_db.connect(store_path)) as conn:
-        rows = conn.execute("SELECT name, updated_at FROM trees ORDER BY updated_at DESC").fetchall()
+        rows = conn.execute(
+            "SELECT name, updated_at FROM trees ORDER BY updated_at DESC"
+        ).fetchall()
     return [{"name": name, "updated_at": updated_at} for name, updated_at in rows]
 
 
@@ -109,12 +111,13 @@ def write_model(
         raise ModelStoreError("model config must be an object")
     V2Model.from_config(config)
     key = sanitize_model_name(name)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     payload = json.dumps(config, default=_as_json)
     with closing(_db.connect(store_path)) as conn:
         conn.execute(
             "INSERT INTO trees (name, config, created_at, updated_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(name) DO UPDATE SET config = excluded.config, updated_at = excluded.updated_at",
+            "ON CONFLICT(name) DO UPDATE SET "
+            "config = excluded.config, updated_at = excluded.updated_at",
             (key, payload, now, now),
         )
         conn.commit()

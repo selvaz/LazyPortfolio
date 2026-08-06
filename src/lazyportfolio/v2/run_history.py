@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from lazyportfolio.v2 import db as _db
@@ -60,7 +60,7 @@ def record_run(
     Returns the run's row id, needed by :func:`attach_artifact` to link a
     report/audit blob back to the run that produced it.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with closing(_db.connect(db_path)) as conn:
         conn.execute(
             "INSERT INTO runs (cache_key, path, kind, tree_id, config_hash, data_as_of, "
@@ -122,7 +122,7 @@ def list_runs(
         rows = conn.execute(query, params).fetchall()
     results = []
     for row in rows:
-        item = dict(zip(columns, row))
+        item = dict(zip(columns, row, strict=True))
         item["weights"] = _loads(item["weights"])
         item["metrics"] = _loads(item["metrics"])
         results.append(item)
@@ -146,7 +146,7 @@ def get_run(run_id: int, *, db_path: str | os.PathLike[str] | None = None) -> di
             "FROM run_artifacts WHERE run_id = ? ORDER BY id",
             (run_id,),
         ).fetchall()
-    item = dict(zip(columns, row))
+    item = dict(zip(columns, row, strict=True))
     item["weights"] = _loads(item["weights"])
     item["metrics"] = _loads(item["metrics"])
     item["payload"] = json.loads(item["payload"])
@@ -159,7 +159,8 @@ def get_run(run_id: int, *, db_path: str | os.PathLike[str] | None = None) -> di
             "external_artifact_id": external_artifact_id,
             "created_at": created_at,
         }
-        for artifact_id, kind, content_type, filename, external_artifact_id, created_at in artifact_rows
+        for artifact_id, kind, content_type, filename, external_artifact_id, created_at
+        in artifact_rows
     ]
     return item
 
@@ -175,7 +176,7 @@ def attach_artifact(
     db_path: str | os.PathLike[str] | None = None,
 ) -> int:
     """Attach a binary/text artifact (e.g. the HTML report) to an existing run."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with closing(_db.connect(db_path)) as conn:
         cursor = conn.execute(
             "INSERT INTO run_artifacts (run_id, kind, content_type, filename, blob, "
@@ -183,7 +184,8 @@ def attach_artifact(
             (run_id, kind, content_type, filename, blob, external_artifact_id, now),
         )
         conn.commit()
-        return int(cursor.lastrowid)
+        assert cursor.lastrowid is not None
+        return cursor.lastrowid
 
 
 def get_report_artifact(

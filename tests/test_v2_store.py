@@ -194,4 +194,7 @@ def test_migrate_legacy_json_models_imports_every_file(tmp_path) -> None:
 
 
 def test_migrate_legacy_json_models_on_missing_directory_returns_empty(tmp_path) -> None:
-    assert migrate_legacy_json_models(tmp_path / "never-existed", store_path=tmp_path / "store.sqlite3") == []
+    imported = migrate_legacy_json_models(
+        tmp_path / "never-existed", store_path=tmp_path / "store.sqlite3"
+    )
+    assert imported == []

@@ -75,7 +75,12 @@ def studio(monkeypatch, tmp_path):
 
         def _fake_estimate_payload(config: dict[str, Any]) -> dict[str, Any]:
             calls.append(1)
-            return {"ok": True, "engine": "fake", "terminal_weights": {"AAA": 1.0}, "call_count": len(calls)}
+            return {
+                "ok": True,
+                "engine": "fake",
+                "terminal_weights": {"AAA": 1.0},
+                "call_count": len(calls),
+            }
 
         monkeypatch.setattr(module, "_v2_estimate_payload", _fake_estimate_payload)
 

@@ -101,10 +101,12 @@ def test_get_report_artifact_returns_the_most_recent_report(tmp_path) -> None:
     db_path = tmp_path / "store.sqlite3"
     run_id = _record(db_path)
     run_history.attach_artifact(
-        run_id, kind="report", content_type="text/html", filename="old.html", blob=b"old", db_path=db_path
+        run_id, kind="report", content_type="text/html", filename="old.html",
+        blob=b"old", db_path=db_path,
     )
     run_history.attach_artifact(
-        run_id, kind="report", content_type="text/html", filename="new.html", blob=b"new", db_path=db_path
+        run_id, kind="report", content_type="text/html", filename="new.html",
+        blob=b"new", db_path=db_path,
     )
     body, content_type, filename = run_history.get_report_artifact("key-1", db_path=db_path)
     assert (body, content_type, filename) == (b"new", "text/html", "new.html")
