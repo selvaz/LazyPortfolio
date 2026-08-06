@@ -1,5 +1,11 @@
 # Project status & history
 
+> **2026-08-06, v3 performance roadmap (Phases 0/A/B/B.5/C):** new exact fast-path solver
+> routes (LP/QP/SOCP) sit ahead of the audited multi-start SLSQP path on
+> `branch agent/optimizer-v3-performance`, engaging automatically per node shape — see
+> `docs/optimizer-v3-rollout.md` for what's proven (correctness, real-tree engagement) versus
+> what's still open (a trustworthy wall-clock number, Phases E/F/G's remaining scope).
+
 This engine and Tree Studio were extracted from [LazyFin](https://github.com/selvaz/LazyFin)
 on 2026-07-28 (all of `src/lazyfin/optimization/`, `project/tree_studio*`, their tests and
 docs). The history below predates the split and is carried over from LazyFin's own
