@@ -26,6 +26,7 @@ from lazyportfolio.v2.store import (
 def _minimal_config() -> dict[str, object]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

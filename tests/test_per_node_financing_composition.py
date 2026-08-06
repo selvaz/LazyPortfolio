@@ -125,6 +125,7 @@ def _config(*, three_levels: bool = False) -> dict[str, Any]:
         )
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": nodes,
         "backtest": {"benchmark": {"name": "B0", "weights": {"A": 0.5, "B": 0.5}}},
     }

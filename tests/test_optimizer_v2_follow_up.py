@@ -97,6 +97,7 @@ def _three_level_model() -> tuple[V2Model, pd.DataFrame]:
             name="B0",
             weights={"ticker:MIDDLE_PROXY": 0.7, "ticker:BOND": 0.3},
         ),
+        reference_currency="USD",
     )
     return model, returns
 
@@ -419,6 +420,7 @@ def test_flat_mode_succeeds_when_forward_pass_fails_elsewhere_in_tree() -> None:
         benchmark=V2Benchmark(
             name="B0", weights={"ticker:MIDDLE_PROXY": 0.7, "ticker:BOND": 0.3}
         ),
+        reference_currency="USD",
     )
 
     # The broken bounds only apply to the leaf's own forward solve; flat's
@@ -818,6 +820,7 @@ def test_sleeve_absent_from_benchmark_uses_complete_local_weights() -> None:
             # Gold is absent from B0 - only Equity (via its proxy) and Bond.
             weights={"ticker:LEAF_PROXY": 0.7, "ticker:BOND": 0.3},
         ),
+        reference_currency="USD",
     )
     estimator = HierarchicalV2Estimator()
     raw_b0 = 0.7 * returns["ticker:LEAF_PROXY"] + 0.3 * returns["ticker:BOND"]
@@ -882,7 +885,9 @@ def test_explicit_zero_risk_free_rate_end_to_end() -> None:
         constraints=V2Constraints(risk_free_rate=0.03),
     )
     model = V2Model(
-        root=root, benchmark=V2Benchmark(name="B0", weights={"ticker:EQUITY": 1.0})
+        root=root,
+        benchmark=V2Benchmark(name="B0", weights={"ticker:EQUITY": 1.0}),
+        reference_currency="USD",
     )
 
     estimate = HierarchicalV2Estimator().estimate(

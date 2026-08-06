@@ -17,6 +17,7 @@ from lazyportfolio.v2.moments import (
 def _config() -> dict[str, object]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

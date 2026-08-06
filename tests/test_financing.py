@@ -30,6 +30,7 @@ def _model(constraints: dict[str, object]) -> V2Model:
     return V2Model.from_config(
         {
             "root_id": "root",
+            "currency": "USD",
             "nodes": [
                 {
                     "id": "root",
@@ -165,6 +166,7 @@ def test_identity_leverage_spread_requires_explicit_cash_permission() -> None:
 def test_global_borrow_spread_is_migrated_to_root() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -187,6 +189,7 @@ def test_global_borrow_spread_is_migrated_to_root() -> None:
 def test_global_spread_can_fund_child_without_activating_root() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -224,6 +227,7 @@ def test_global_spread_can_fund_child_without_activating_root() -> None:
 def test_non_root_financing_is_accepted() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

@@ -18,6 +18,7 @@ from lazyportfolio.hierarchical_v2 import V2OptimizationError, V2View
 def _config(*, objective: str = "min_risk", constraints: dict | None = None) -> dict:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

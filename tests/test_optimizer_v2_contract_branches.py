@@ -22,6 +22,7 @@ from lazyportfolio.v2.validation import normalize_config
 def _base_config(**node_constraints: object) -> dict[str, object]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -192,6 +193,7 @@ def test_mean_reference_kind_rejects_father_proxy() -> None:
 def test_duplicate_node_id_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {"id": "root", "instruments": ["acwi"], "children": ["dup"], "constraints": {}},
             {"id": "dup", "instruments": ["agg"], "children": [], "constraints": {}},
@@ -206,6 +208,7 @@ def test_duplicate_node_id_rejected() -> None:
 def test_duplicate_node_name_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root", "name": "Root", "instruments": [],
@@ -229,6 +232,7 @@ def test_duplicate_node_name_rejected() -> None:
 def test_sibling_proxy_collision_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root", "name": "Root", "instruments": [],
@@ -252,6 +256,7 @@ def test_sibling_proxy_collision_rejected() -> None:
 def test_child_proxy_colliding_with_direct_instrument_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root", "name": "Root", "instruments": ["acwi"],
@@ -271,6 +276,7 @@ def test_child_proxy_colliding_with_direct_instrument_rejected() -> None:
 def test_cycle_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {"id": "root", "instruments": [], "children": ["a"], "constraints": {}},
             {
@@ -287,6 +293,7 @@ def test_cycle_rejected() -> None:
 def test_multiple_parents_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {"id": "root", "instruments": [], "children": ["a", "b"], "constraints": {}},
             {
@@ -318,6 +325,7 @@ def test_empty_root_id_rejected() -> None:
 def test_empty_node_id_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {"id": "root", "instruments": ["acwi"], "children": ["a"], "constraints": {}},
             {"id": "", "proxy": "acwi", "instruments": [], "children": [], "constraints": {}},
@@ -331,6 +339,7 @@ def test_empty_node_id_rejected() -> None:
 def test_duplicate_direct_instrument_rejected() -> None:
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root", "instruments": ["acwi", "acwi"],
@@ -352,6 +361,7 @@ def test_node_unreachable_from_root_rejected() -> None:
 
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {"id": "root", "instruments": ["acwi"], "children": [], "constraints": {}},
             {
@@ -373,6 +383,7 @@ def test_leaf_nodes_without_children_are_unaffected() -> None:
 
     config = {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root", "instruments": [], "children": ["leaf"],

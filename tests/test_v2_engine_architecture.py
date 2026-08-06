@@ -20,6 +20,7 @@ _REMOVED_PATCH_MODULES = (
 def _config() -> dict[str, object]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

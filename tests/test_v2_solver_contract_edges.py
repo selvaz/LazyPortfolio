@@ -108,6 +108,7 @@ def test_estimator_rejects_unknown_hierarchy_mode() -> None:
             name="B0",
             weights={"ticker:A": 0.5, "ticker:B": 0.5},
         ),
+        reference_currency="USD",
     )
     with pytest.raises(V2OptimizationError, match="unsupported hierarchy mode"):
         HierarchicalV2Estimator().estimate(

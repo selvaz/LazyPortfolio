@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from lazyportfolio.price_alignment import DEFAULT_MAX_GAP, align_levels
+
 
 @dataclass(frozen=True)
 class OptimizationDataset:
@@ -30,6 +32,7 @@ class OptimizationDataBackend(Protocol):
         start: str = "",
         end: str = "",
         frequency: str = "D",
+        currency: str | None = None,
     ) -> OptimizationDataset: ...
 
 
@@ -40,7 +43,7 @@ class MarketDataHubOptimizationBackend:
     #: allowed to span before it's treated as missing data rather than a
     #: holiday. Covers multi-day closures (e.g. a national holiday cluster)
     #: without masking a genuine, longer-running data outage.
-    _MAX_HOLIDAY_GAP = 5
+    _MAX_HOLIDAY_GAP = DEFAULT_MAX_GAP
 
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path
@@ -52,6 +55,7 @@ class MarketDataHubOptimizationBackend:
         start: str = "",
         end: str = "",
         frequency: str = "D",
+        currency: str | None = None,
     ) -> OptimizationDataset:
         try:
             from market_data_hub import extract
@@ -103,13 +107,26 @@ class MarketDataHubOptimizationBackend:
         # most recent price hasn't arrived yet — is left as NaN rather than
         # reported as today's price, so it reads as missing (and gets
         # dropped downstream) instead of a fabricated flat/zero return.
+        aligned = align_levels(prices, max_gap=self._MAX_HOLIDAY_GAP)
+        aligned_prices = aligned.frame
+
+        instrument_currencies: dict[str, str] | None = None
+        if currency is not None:
+            # Convert price *levels* into the portfolio's reference currency
+            # before deriving returns -- a return isn't linear in the FX
+            # rate, so converting returns directly would be wrong.
+            from lazyportfolio import fx
+
+            instrument_currencies = fx.instrument_currencies(symbols, db_path=self._db_path)
+            fx_rates = fx.load_fx_rates(start or None, end or None, db_path=self._db_path)
+            native_by_label = dict(
+                zip(labels, (instrument_currencies[s] for s in symbols), strict=True)
+            )
+            aligned_prices = fx.convert_prices(aligned_prices, native_by_label, currency, fx_rates)
+
         # ``fill_method=None`` prevents pandas from applying a second,
         # implicit fill while deriving returns.
-        missing = prices.isna()
-        trailing_gap = missing[::-1].cumprod().astype(bool)[::-1]
-        aligned_prices = prices.ffill(limit=self._MAX_HOLIDAY_GAP).mask(trailing_gap)
         frame = aligned_prices.pct_change(fill_method=None)
-        filled_cells = int((missing.to_numpy() & ~aligned_prices.isna().to_numpy()).sum())
         return OptimizationDataset(
             returns=frame,
             metadata={
@@ -123,9 +140,11 @@ class MarketDataHubOptimizationBackend:
                 "price_alignment": "forward_fill_shared_trading_grid",
                 "price_alignment_max_gap_days": self._MAX_HOLIDAY_GAP,
                 "price_rows": len(prices),
-                "filled_price_cells": filled_cells,
-                "trailing_gap_cells": int(trailing_gap.to_numpy().sum()),
+                "filled_price_cells": aligned.filled_cells,
+                "trailing_gap_cells": aligned.trailing_gap_cells,
                 "n_rows": len(frame),
+                "reference_currency": currency,
+                "instrument_currencies": instrument_currencies,
                 **metadata,
             },
         )

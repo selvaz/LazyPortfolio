@@ -81,7 +81,7 @@ def _config_instruments(model: V2Model) -> list[str]:
 def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
     model = V2Model.from_config(config)
     data = config.get("data") if isinstance(config.get("data"), dict) else {}
-    return model, _load_instruments(_config_instruments(model), data)
+    return model, _load_instruments(_config_instruments(model), data, model.reference_currency)
 
 
 def _config_hash(config: dict[str, Any]) -> str:
@@ -182,12 +182,16 @@ def _run_summary_fields(path: str, payload: dict[str, Any]) -> tuple[Any, Any]:
     return None, None
 
 
-def _load_instruments(instruments: list[str], data: dict[str, Any]) -> OptimizationDataset:
-    """Load a complete daily return matrix and identify missing series clearly."""
+def _load_instruments(
+    instruments: list[str], data: dict[str, Any], currency: str
+) -> OptimizationDataset:
+    """Load a complete daily return matrix, converted to ``currency``, and
+    identify missing series clearly."""
     dataset = MarketDataHubOptimizationBackend().load_returns(
         instruments,
         start=str(data.get("start") or ""),
         end=str(data.get("end") or ""),
+        currency=currency,
     )
     missing = [instrument for instrument in instruments if instrument not in dataset.returns.columns]
     if missing:
@@ -549,6 +553,7 @@ def _v2_validation_payload(config: dict[str, Any]) -> dict[str, Any]:
 def sample_config() -> dict[str, Any]:
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",
@@ -596,6 +601,7 @@ def minimal_sample_config() -> dict[str, Any]:
     """A smaller, two-node configuration for a quick first run."""
     return {
         "root_id": "root",
+        "currency": "USD",
         "nodes": [
             {
                 "id": "root",

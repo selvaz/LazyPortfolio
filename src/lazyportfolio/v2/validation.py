@@ -21,6 +21,10 @@ RECOGNIZED_OBJECTIVES = {"min_risk", "max_return", "max_ratio", "max_utility", "
 #: coherent meaning for that node's own equilibrium mean estimation.
 SUPPORTED_MEAN_REFERENCE_KINDS = {"none", "benchmark", "local_weights"}
 SUPPORTED_CONSTRAINT_POLICIES = {"hard_fail", "nearest_feasible"}
+#: The only reference currencies lazyportfolio.fx can convert between today
+#: (EURUSD=X/GBPUSD=X/USDJPY=X give full USD-pivoted coverage of exactly
+#: these four -- see lazyportfolio.fx's module docstring).
+SUPPORTED_CURRENCIES = {"USD", "EUR", "GBP", "JPY"}
 
 
 def finite_float(value: Any, label: str) -> float:
@@ -122,6 +126,19 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     root = next((item for item in nodes if str(item.get("id")) == root_id), None)
     if root is None:
         raise ValueError("root node is missing")
+
+    currency_raw = normalized.get("currency")
+    if not isinstance(currency_raw, str) or not currency_raw.strip():
+        raise ValueError(
+            "currency is required: every tree must declare a portfolio "
+            "reference currency (one of USD, EUR, GBP, JPY)"
+        )
+    currency = currency_raw.strip().upper()
+    if currency not in SUPPORTED_CURRENCIES:
+        raise ValueError(
+            f"currency must be one of {sorted(SUPPORTED_CURRENCIES)}, got {currency_raw!r}"
+        )
+    normalized["currency"] = currency
 
     data = normalized.get("data")
     if data is None:
