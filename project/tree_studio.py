@@ -7,6 +7,12 @@ tool and it can access the user's local Market Data Hub database.
 Tree Studio is V2-only.  There is one hierarchical engine
 (``lazyportfolio.hierarchical_v2``); it does not call any legacy
 allocation tree, backend, or backtester.
+
+A daily production allocation is a call to ``/api/v2/estimate`` (a single
+point-in-time solve) -- it never touches ``_run_full_backtest`` or
+``_v2_export_artifacts``, so it never builds the walk-forward fold ledger,
+the audit ZIP, or the client HTML report. There is no separate
+daily-allocation endpoint or job abstraction; reuse this one.
 """
 
 # ruff: noqa: E501
@@ -24,7 +30,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
 from tree_studio_v2.exports import build_audit_bundle, build_client_report
@@ -331,24 +337,30 @@ _raw_backtest_cache_lock = Lock()
 _RAW_BACKTEST_CACHE_LIMIT = 8
 
 
-def _raw_backtest_key(config: dict[str, Any]) -> str:
+def _raw_backtest_key(config: dict[str, Any], *, capture_audit_series: bool) -> str:
     _, data_fingerprint = _data_fingerprint(config)
-    return _cache_key("/api/v2/raw-backtest", _config_hash(config), data_fingerprint)
+    path = "/api/v2/raw-backtest" + ("/with-series" if capture_audit_series else "")
+    return _cache_key(path, _config_hash(config), data_fingerprint)
 
 
-def _run_full_backtest(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset, Any]:
+def _run_full_backtest(
+    config: dict[str, Any], *, capture_audit_series: bool
+) -> tuple[V2Model, OptimizationDataset, Any]:
     """Run (or reuse) THE walk-forward backtest for this config.
 
-    Always captures per-fold audit series -- the extra pandas bookkeeping is
-    cheap next to the solver work the walk-forward loop already does, and it
-    means this single run covers both the plain backtest view and the
-    report/audit export, which need the audit series. Keyed on the exact
-    config AND a Market Data Hub freshness fingerprint (same policy as
-    ``_cache_key``), so any change to the tree, or a data refresh, both
-    invalidate the cache naturally instead of silently serving a pre-refresh
-    result for the rest of the process's lifetime.
+    ``capture_audit_series`` is part of the cache key: a plain backtest view
+    never reads per-fold estimation series (only the audit ZIP export does,
+    see ``tree_studio_v2/exports.py``'s ``build_audit_bundle``), so it's
+    requested with ``capture_audit_series=False`` and gets a cheaper,
+    separately-cached run -- a later audit-bundle request recomputes once
+    with series captured rather than paying that extra bookkeeping on every
+    backtest view. Keyed on the exact config AND a Market Data Hub freshness
+    fingerprint (same policy as ``_cache_key``), so any change to the tree,
+    or a data refresh, both invalidate the cache naturally instead of
+    silently serving a pre-refresh result for the rest of the process's
+    lifetime.
     """
-    key = _raw_backtest_key(config)
+    key = _raw_backtest_key(config, capture_audit_series=capture_audit_series)
     with _raw_backtest_cache_lock:
         cached = _raw_backtest_cache.get(key)
     if cached is not None:
@@ -365,7 +377,7 @@ def _run_full_backtest(config: dict[str, Any]) -> tuple[V2Model, OptimizationDat
         rebalance_frequency=str(backtest.get("rebalance_frequency") or "M"),
         transaction_cost_bps=float(backtest.get("transaction_cost_bps") or 0),
         include_partial_last_period=bool(backtest.get("include_partial_last_period", False)),
-        capture_audit_series=True,
+        capture_audit_series=capture_audit_series,
     )
     result = (model, dataset, report)
     with _raw_backtest_cache_lock:
@@ -376,7 +388,7 @@ def _run_full_backtest(config: dict[str, Any]) -> tuple[V2Model, OptimizationDat
 
 
 def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
-    model, dataset, report = _run_full_backtest(config)
+    model, dataset, report = _run_full_backtest(config, capture_audit_series=False)
     mode = _v2_mode(config)
     curves = {name: _chart_curve(series) for name, series in report.curves.items()}
     return {
@@ -402,8 +414,15 @@ def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, str]]:
-    model, dataset, report = _run_full_backtest(config)
+def _v2_export_artifacts(
+    config: dict[str, Any], *, kind: Literal["audit", "report"]
+) -> dict[str, tuple[bytes, str, str]]:
+    """Build only the requested artifact -- a client-report request must
+    never pay for (or even construct) the audit ZIP, and vice versa. Only
+    ``kind == "audit"`` needs per-fold estimation series, so that's the only
+    case that asks ``_run_full_backtest`` for the more expensive capture.
+    """
+    model, dataset, report = _run_full_backtest(config, capture_audit_series=(kind == "audit"))
     backtest = config["backtest"]
     mode = _v2_mode(config)
     estimation_frequency = str(backtest.get("estimation_frequency") or "W")
@@ -422,14 +441,16 @@ def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, 
     stem = _MODEL_NAME.sub("-", str(root.get("name") or "hierarchical-model")).strip(" .-")
     stem = stem or "hierarchical-model"
     scientific_study = _scientific_study_result(config, model, dataset, mode)
-    audit = build_audit_bundle(
-        config=config,
-        data_metadata=dataset.metadata,
-        daily_returns=dataset.returns,
-        estimate=estimate,
-        report=report,
-        scientific_study=scientific_study,
-    )
+    if kind == "audit":
+        audit = build_audit_bundle(
+            config=config,
+            data_metadata=dataset.metadata,
+            daily_returns=dataset.returns,
+            estimate=estimate,
+            report=report,
+            scientific_study=scientific_study,
+        )
+        return {"audit": (audit, "application/zip", f"{stem}-v2-audit.zip")}
     client = build_client_report(
         config=config,
         data_metadata=dataset.metadata,
@@ -437,10 +458,7 @@ def _v2_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, 
         report=report,
         scientific_study=scientific_study,
     )
-    return {
-        "audit": (audit, "application/zip", f"{stem}-v2-audit.zip"),
-        "report": (client, "text/html; charset=utf-8", f"{stem}-v2-report.html"),
-    }
+    return {"report": (client, "text/html; charset=utf-8", f"{stem}-v2-report.html")}
 
 
 def _report_artifact_fields(config: dict[str, Any]) -> tuple[str, str]:
@@ -877,10 +895,16 @@ class StudioHandler(BaseHTTPRequestHandler):
                 )
                 self._json(HTTPStatus.OK, {**payload, "cached": False})
             elif path in {"/api/v2/audit-bundle", "/api/v2/client-report"}:
-                kind = "audit" if path.endswith("audit-bundle") else "report"
+                kind: Literal["audit", "report"] = (
+                    "audit" if path.endswith("audit-bundle") else "report"
+                )
                 config_hash = _config_hash(config)
                 data_as_of, data_fingerprint = _data_fingerprint(config)
-                key = _cache_key("/api/v2/artifacts", config_hash, data_fingerprint)
+                # kind is part of the key: audit and report are cached (and,
+                # for report, persisted) independently since _v2_export_artifacts
+                # now builds only the one that was actually requested -- see
+                # that function's docstring.
+                key = _cache_key(f"/api/v2/artifacts/{kind}", config_hash, data_fingerprint)
                 with self._cache_lock:
                     artifacts = self._artifact_cache.get(key)
                 if artifacts is None and kind == "report":
@@ -890,53 +914,51 @@ class StudioHandler(BaseHTTPRequestHandler):
                         self._binary(HTTPStatus.OK, body, content_type, filename)
                         return
                 if artifacts is None:
-                    artifacts = _v2_export_artifacts(config)
+                    artifacts = _v2_export_artifacts(config, kind=kind)
                     with self._cache_lock:
                         if len(self._artifact_cache) >= self._artifact_cache_limit:
                             self._artifact_cache.pop(next(iter(self._artifact_cache)))
                         self._artifact_cache[key] = artifacts
                     # Persist only the (small) HTML report -- the audit ZIP is
                     # multi-MB per entry and deliberately stays in-memory-only,
-                    # see lazyportfolio.v2.run_history's module docstring.
-                    report_body, report_ct, report_fn = artifacts["report"]
-                    title, summary = _report_artifact_fields(config)
-                    # Best-effort catalog entry into LazyTools' shared artifact
-                    # registry -- only for the HTML report (never the audit
-                    # ZIP, matching the persistence policy just above), and
-                    # only right here where the report is genuinely
-                    # (re)generated, never on a cache hit -- a re-view of an
-                    # already-cached report must not insert a fresh artifact
-                    # row every time. Only fires when the ORIGINATING request
-                    # was for the report, not when an audit-bundle request
-                    # happened to trigger generation of both.
-                    external_id = None
+                    # see lazyportfolio.v2.run_history's module docstring. An
+                    # audit-bundle request no longer builds a report at all
+                    # (see _v2_export_artifacts), so there is nothing to
+                    # persist/register for that kind.
                     if kind == "report":
+                        report_body, report_ct, report_fn = artifacts["report"]
+                        title, summary = _report_artifact_fields(config)
+                        # Best-effort catalog entry into LazyTools' shared
+                        # artifact registry, only right here where the report
+                        # is genuinely (re)generated, never on a cache hit --
+                        # a re-view of an already-cached report must not
+                        # insert a fresh artifact row every time.
                         external_id = register_report_artifact(
                             title=title,
                             summary=summary,
                             tags=["tree-studio"],
                             content=report_body.decode("utf-8"),
                         )
-                    run_id = _run_history.record_run(
-                        cache_key=key,
-                        path="/api/v2/artifacts",
-                        kind="artifacts",
-                        tree_id=_tree_id_for_config(config),
-                        config_hash=config_hash,
-                        data_as_of=data_as_of,
-                        data_fingerprint=data_fingerprint,
-                        weights=None,
-                        metrics=None,
-                        payload={"title": title, "summary": summary},
-                    )
-                    _run_history.attach_artifact(
-                        run_id,
-                        kind="report",
-                        content_type=report_ct,
-                        filename=report_fn,
-                        blob=report_body,
-                        external_artifact_id=external_id,
-                    )
+                        run_id = _run_history.record_run(
+                            cache_key=key,
+                            path="/api/v2/artifacts",
+                            kind="artifacts",
+                            tree_id=_tree_id_for_config(config),
+                            config_hash=config_hash,
+                            data_as_of=data_as_of,
+                            data_fingerprint=data_fingerprint,
+                            weights=None,
+                            metrics=None,
+                            payload={"title": title, "summary": summary},
+                        )
+                        _run_history.attach_artifact(
+                            run_id,
+                            kind="report",
+                            content_type=report_ct,
+                            filename=report_fn,
+                            blob=report_body,
+                            external_artifact_id=external_id,
+                        )
                 body, content_type, filename = artifacts[kind]
                 self._binary(HTTPStatus.OK, body, content_type, filename)
             else:
