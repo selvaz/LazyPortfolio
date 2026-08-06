@@ -337,14 +337,21 @@ _raw_backtest_cache_lock = Lock()
 _RAW_BACKTEST_CACHE_LIMIT = 8
 
 
-def _raw_backtest_key(config: dict[str, Any], *, capture_audit_series: bool) -> str:
+def _raw_backtest_key(
+    config: dict[str, Any], *, capture_audit_series: bool, expanding: bool = False
+) -> str:
     _, data_fingerprint = _data_fingerprint(config)
     path = "/api/v2/raw-backtest" + ("/with-series" if capture_audit_series else "")
+    path += "/expanding" if expanding else ""
     return _cache_key(path, _config_hash(config), data_fingerprint)
 
 
 def _run_full_backtest(
-    config: dict[str, Any], *, capture_audit_series: bool
+    config: dict[str, Any],
+    *,
+    capture_audit_series: bool,
+    max_workers: int = 1,
+    expanding: bool = False,
 ) -> tuple[V2Model, OptimizationDataset, Any]:
     """Run (or reuse) THE walk-forward backtest for this config.
 
@@ -359,8 +366,23 @@ def _run_full_backtest(
     or a data refresh, both invalidate the cache naturally instead of
     silently serving a pre-refresh result for the rest of the process's
     lifetime.
+
+    ``max_workers`` (v3 performance roadmap Phase F1) defaults to 1 --
+    today's exact sequential behavior, unchanged for every existing caller
+    (the live HTTP endpoints never pass it). Not yet exposed through the
+    Tree Studio UI/API; callers that want the parallel fold estimation path
+    (e.g. a one-off script) pass it explicitly. Excluded from the cache key
+    deliberately -- it only affects how fast the (identical) result is
+    computed, never the result itself.
+
+    ``expanding`` (Phase F1 follow-up) selects the training-window
+    methodology and, unlike ``max_workers``, changes the actual result, so
+    it IS part of the cache key -- a rolling-window result must never be
+    served for an expanding-window request or vice versa.
     """
-    key = _raw_backtest_key(config, capture_audit_series=capture_audit_series)
+    key = _raw_backtest_key(
+        config, capture_audit_series=capture_audit_series, expanding=expanding
+    )
     with _raw_backtest_cache_lock:
         cached = _raw_backtest_cache.get(key)
     if cached is not None:
@@ -378,6 +400,8 @@ def _run_full_backtest(
         transaction_cost_bps=float(backtest.get("transaction_cost_bps") or 0),
         include_partial_last_period=bool(backtest.get("include_partial_last_period", False)),
         capture_audit_series=capture_audit_series,
+        max_workers=max_workers,
+        expanding=expanding,
     )
     result = (model, dataset, report)
     with _raw_backtest_cache_lock:
@@ -415,14 +439,31 @@ def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _v2_export_artifacts(
-    config: dict[str, Any], *, kind: Literal["audit", "report"]
+    config: dict[str, Any],
+    *,
+    kind: Literal["audit", "report"],
+    max_workers: int = 1,
+    expanding: bool = False,
 ) -> dict[str, tuple[bytes, str, str]]:
     """Build only the requested artifact -- a client-report request must
     never pay for (or even construct) the audit ZIP, and vice versa. Only
     ``kind == "audit"`` needs per-fold estimation series, so that's the only
     case that asks ``_run_full_backtest`` for the more expensive capture.
+
+    ``max_workers``/``expanding`` (Phase F1 and its follow-up) default to
+    1/False, unchanged for the live HTTP endpoints; see
+    ``_run_full_backtest``. ``expanding`` only affects the historical
+    walk-forward ``report`` -- the "current recommendation" ``estimate``
+    snapshot below always uses the tree's own rolling ``train_size`` window
+    regardless, since today's actual allocation should reflect the most
+    recent window, not an ever-growing one.
     """
-    model, dataset, report = _run_full_backtest(config, capture_audit_series=(kind == "audit"))
+    model, dataset, report = _run_full_backtest(
+        config,
+        capture_audit_series=(kind == "audit"),
+        max_workers=max_workers,
+        expanding=expanding,
+    )
     backtest = config["backtest"]
     mode = _v2_mode(config)
     estimation_frequency = str(backtest.get("estimation_frequency") or "W")
