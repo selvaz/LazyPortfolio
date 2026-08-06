@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from math import isfinite, sqrt
 from typing import Any, Literal
@@ -23,6 +24,7 @@ from lazyportfolio.v2.moments import (
     black_litterman_posterior,
     estimate_moments,
 )
+from lazyportfolio.v2.problem_class import classify
 from lazyportfolio.v2.validation import validate_economic_settings
 
 FinancingRegime = Literal["none", "lend", "borrow"]
@@ -329,6 +331,7 @@ class V2LocalOptimizer:
                 f"unsupported objective {objective!r}; must be one of "
                 f"{sorted(RECOGNIZED_OBJECTIVES)}"
             )
+        problem_class = classify(objective, constraints)
         clean = frame.dropna(how="any")
         if len(clean) < 3:
             raise V2OptimizationError(
@@ -528,6 +531,7 @@ class V2LocalOptimizer:
             candidates.extend(boundary_starts[:2])
         candidates.extend(randomized_starts)
 
+        solve_started = time.perf_counter()
         accepted: list[Any] = []
         for candidate in candidates:
             result = minimize(
@@ -573,6 +577,7 @@ class V2LocalOptimizer:
             raise V2OptimizationError(
                 "local optimiser found no audited feasible solution"
             )
+        solve_seconds = time.perf_counter() - solve_started
 
         restart_candidate_count = len(candidates)
         restart_objective_spread = 0.0
@@ -690,6 +695,16 @@ class V2LocalOptimizer:
             constraint_stage_results=tuple(stage_results),
             restart_candidate_count=restart_candidate_count,
             restart_objective_spread=restart_objective_spread,
+            problem_class=problem_class.label,
+            solver_status="nearest_feasible_fallback" if projected else "ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason=(
+                "no multi-start candidate satisfied hard constraints; used the "
+                "lexicographic nearest-feasible projection"
+                if projected
+                else ""
+            ),
         )
         return dict(zip(names, weights, strict=True)), audit
 
@@ -745,7 +760,9 @@ class V2LocalOptimizer:
             min_weights=dict(zip(names, lower, strict=True)),
             max_weights=dict(zip(names, upper, strict=True)),
         )
+        solve_started = time.perf_counter()
         estimator.fit(clean)
+        solve_seconds = time.perf_counter() - solve_started
         weights = np.asarray(estimator.weights_, dtype=float)
         if not np.all(np.isfinite(weights)):
             raise V2OptimizationError("HRP returned non-finite weights")
@@ -812,6 +829,11 @@ class V2LocalOptimizer:
             hrp_distance_metric="pearson",
             hrp_linkage_method="ward",
             hrp_risk_measure="variance",
+            problem_class=classify("hrp", constraints).label,
+            solver_status="ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason="",
         )
         return dict(zip(names, weights, strict=True)), audit
 
