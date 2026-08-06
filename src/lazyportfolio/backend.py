@@ -1,4 +1,10 @@
-"""Daily simple-return seam for the optimizer; no observations cross an LLM boundary."""
+"""Daily simple-return seam for the optimizer; no observations cross an LLM boundary.
+
+The production seam deliberately obtains price *levels* from Market Data Hub,
+aligns them on their shared trading-date grid, and only then derives returns.
+This makes a local-market holiday an explicit zero return rather than silently
+removing the entire date from a multi-market portfolio's history.
+"""
 
 from __future__ import annotations
 
@@ -69,19 +75,27 @@ class MarketDataHubOptimizationBackend:
             raise ValueError("instruments must be unique after canonicalisation")
 
         symbols = [item.key for item in parsed]
-        frame, metadata = extract.extract_series(
+        prices, metadata = extract.extract_series(
             symbols,
             start=start or None,
             end=end or None,
             domain="prices",
             field="adj_close",
-            transform="pct_change",
+            transform="level",
             frequency="D",
             fillna="none",
             db_path=self._db_path,
         )
         labels = [str(item) for item in parsed]
-        frame = frame.rename(columns=dict(zip(symbols, labels, strict=True)))[labels]
+        prices = prices.rename(columns=dict(zip(symbols, labels, strict=True)))[labels]
+
+        # The hub's wide price frame is the union of observed trading dates.
+        # Forward-fill only across that already-observed grid: a component that
+        # did not trade on a date on which another market did is held at its
+        # latest tradable price.  ``fill_method=None`` prevents pandas from
+        # applying a second, implicit fill while deriving returns.
+        aligned_prices = prices.ffill()
+        frame = aligned_prices.pct_change(fill_method=None)
         return OptimizationDataset(
             returns=frame,
             metadata={
@@ -91,6 +105,10 @@ class MarketDataHubOptimizationBackend:
                 "requested_end": end or None,
                 "frequency": "D",
                 "return_type": "simple",
+                "source_field": "adj_close",
+                "price_alignment": "forward_fill_shared_trading_grid",
+                "price_rows": len(prices),
+                "aligned_price_rows": len(aligned_prices),
                 "n_rows": len(frame),
                 **metadata,
             },
