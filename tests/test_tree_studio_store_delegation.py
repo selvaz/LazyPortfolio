@@ -1,7 +1,7 @@
 """Tree Studio's own model-store/mode wrappers must delegate to the shared
 ``lazyportfolio.v2.store``/``v2.mode`` modules, not reimplement the logic --
 that delegation is what guarantees the GUI and LazyTools' MCP
-``portfolio_tree_*`` tools read/write byte-identical files for the same name.
+``portfolio_tree_*`` tools read/write byte-identical rows for the same name.
 
 ``project/tree_studio.py`` is a script, not an installed package, so it is
 imported the same way ``project/tree_studio_v2/validate_exports.py`` already
@@ -22,7 +22,7 @@ PROJECT_DIR = REPO_ROOT / "project"
 
 @pytest.fixture()
 def tree_studio(monkeypatch, tmp_path):
-    monkeypatch.setenv("LAZYPORTFOLIO_TREE_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("LAZYPORTFOLIO_TREE_DB", str(tmp_path / "store.sqlite3"))
     sys.path.insert(0, str(PROJECT_DIR))
     try:
         module = importlib.import_module("tree_studio")
@@ -50,16 +50,18 @@ def _config() -> dict[str, object]:
     }
 
 
-def test_model_path_resolves_under_the_shared_env_directory(tree_studio, tmp_path) -> None:
-    assert tree_studio._model_path("a tree").parent == tmp_path.resolve()
-
-
-def test_saved_models_reflects_a_file_written_through_the_store(tree_studio, tmp_path) -> None:
+def test_saved_models_reflects_a_tree_written_through_the_store(tree_studio, tmp_path) -> None:
     from lazyportfolio.v2.store import write_model
 
-    write_model("from-the-store", _config(), store_dir=tmp_path)
-    expected = [{"name": "from-the-store", "file": "from-the-store.json"}]
-    assert tree_studio._saved_models() == expected
+    write_model("from-the-store", _config(), store_path=tmp_path / "store.sqlite3")
+    assert [item["name"] for item in tree_studio._saved_models()] == ["from-the-store"]
+
+
+def test_saved_models_isolated_per_env_database(tree_studio) -> None:
+    # The fixture points LAZYPORTFOLIO_TREE_DB at a fresh, empty tmp_path
+    # database -- nothing written by another test (or a prior real Tree
+    # Studio session) should leak in here.
+    assert tree_studio._saved_models() == []
 
 
 def test_v2_mode_delegates_to_mode_from_config(tree_studio) -> None:

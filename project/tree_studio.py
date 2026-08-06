@@ -43,7 +43,7 @@ from lazyportfolio.scientific_study import (
     ScientificStudyResult,
     run_scientific_study,
 )
-from lazyportfolio.v2 import run_cache as _run_cache_store
+from lazyportfolio.v2 import run_history as _run_history
 from lazyportfolio.v2 import store as _store
 from lazyportfolio.v2.mode import mode_from_config as _mode_from_config
 from lazyportfolio.v2.store import _as_json
@@ -61,26 +61,13 @@ class StudioConfigError(ValueError):
     """A configuration cannot be represented by the V2 contract."""
 
 
-def _model_path(name: Any) -> Path:
-    """Return the shared, Git-ignored path for a named Studio model.
-
-    Delegates to :mod:`lazyportfolio.v2.store` -- the same store LazyTools'
-    MCP ``portfolio_tree_*`` tools read and write -- so a model saved by
-    either side resolves to the identical file.
-    """
-    try:
-        return _store.model_path(name)
-    except _store.ModelStoreError as exc:
-        raise StudioConfigError(str(exc)) from exc
-
-
 def _saved_models() -> list[dict[str, str]]:
     return _store.list_saved_models()
 
 
-def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
-    model = V2Model.from_config(config)
-    instruments = list(
+def _config_instruments(model: V2Model) -> list[str]:
+    """The de-duplicated instrument set a built V2Model actually references."""
+    return list(
         dict.fromkeys(
             [
                 *model.root.terminal_instruments(),
@@ -89,8 +76,110 @@ def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
             ]
         )
     )
+
+
+def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
+    model = V2Model.from_config(config)
     data = config.get("data") if isinstance(config.get("data"), dict) else {}
-    return model, _load_instruments(instruments, data)
+    return model, _load_instruments(_config_instruments(model), data)
+
+
+def _config_hash(config: dict[str, Any]) -> str:
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=_as_json)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _data_fingerprint(config: dict[str, Any]) -> tuple[str | None, str]:
+    """Cheap freshness signal for the instruments a tree config references.
+
+    Reads Market Data Hub's ``coverage_report`` (symbol, last_date,
+    obs_count, last_run_id) -- no price history is loaded -- so this stays
+    cheap enough to run on every cache lookup, before deciding whether to
+    reuse a cached result. A MarketDataHub refresh that touches any
+    referenced instrument changes the fingerprint (and therefore the cache
+    key derived from it), so a result computed before the refresh is never
+    served as if it were still current.
+
+    Degrades to a constant fallback (never raises) when market-data-hub
+    isn't installed or its DB isn't reachable, matching this module's
+    existing best-effort MDH-metadata pattern (see ``instrument_labels``).
+    """
+    try:
+        model = V2Model.from_config(config)
+    except (KeyError, TypeError, ValueError):
+        return None, "invalid-config"
+    symbols = sorted(
+        {
+            instrument.split(":", 1)[-1].strip().upper()
+            for instrument in _config_instruments(model)
+            if instrument
+        }
+    )
+    if not symbols:
+        return None, "no-instruments"
+    try:
+        from market_data_hub.db.connection import get_conn
+
+        con = get_conn(read_only=True)
+        try:
+            placeholders = ", ".join("?" for _ in symbols)
+            rows = con.execute(
+                "SELECT symbol, last_date, obs_count, last_run_id FROM coverage_report "
+                f"WHERE upper(symbol) IN ({placeholders}) ORDER BY symbol",
+                symbols,
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return None, "coverage-unavailable"
+    if not rows:
+        return None, "no-coverage"
+    as_of = max((str(row[1]) for row in rows if row[1] is not None), default=None)
+    canonical = json.dumps([[str(value) for value in row] for row in rows], separators=(",", ":"))
+    fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return as_of, fingerprint
+
+
+def _cache_key(path: str, config_hash: str, data_fingerprint: str) -> str:
+    return f"{path}:{config_hash}:{data_fingerprint}"
+
+
+def _tree_id_for_config(config: dict[str, Any]) -> str | None:
+    """Best-effort link back to a saved tree.
+
+    Only set when this exact config (canonicalized) byte-for-byte matches a
+    currently-saved tree under the name its root node carries -- an ad-hoc,
+    unsaved, or since-edited config stays unlinked (``None``) rather than
+    guessing which saved tree it might correspond to.
+    """
+    nodes = config.get("nodes") if isinstance(config.get("nodes"), list) else []
+    root_id = str(config.get("root_id") or "")
+    root = next((node for node in nodes if str(node.get("id")) == root_id), None)
+    root_name = str((root or {}).get("name") or "").strip()
+    if not root_name:
+        return None
+    try:
+        saved = _store.read_model(root_name)
+    except FileNotFoundError:
+        return None
+
+    def canonical(value: dict[str, Any]) -> str:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=_as_json)
+
+    if canonical(config) != canonical(saved):
+        return None
+    return _store.sanitize_model_name(root_name)
+
+
+def _run_summary_fields(path: str, payload: dict[str, Any]) -> tuple[Any, Any]:
+    """Extract (weights, metrics) from a producer's response for the run_history row."""
+    if path == "/api/v2/estimate":
+        return payload.get("terminal_weights"), None
+    if path == "/api/v2/backtest":
+        return None, (payload.get("report") or {}).get("metrics")
+    if path == "/api/v2/scientific-study":
+        return None, payload.get("metrics")
+    return None, None
 
 
 def _load_instruments(instruments: list[str], data: dict[str, Any]) -> OptimizationDataset:
@@ -239,8 +328,8 @@ _RAW_BACKTEST_CACHE_LIMIT = 8
 
 
 def _raw_backtest_key(config: dict[str, Any]) -> str:
-    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=_as_json)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    _, data_fingerprint = _data_fingerprint(config)
+    return _cache_key("/api/v2/raw-backtest", _config_hash(config), data_fingerprint)
 
 
 def _run_full_backtest(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset, Any]:
@@ -250,8 +339,10 @@ def _run_full_backtest(config: dict[str, Any]) -> tuple[V2Model, OptimizationDat
     cheap next to the solver work the walk-forward loop already does, and it
     means this single run covers both the plain backtest view and the
     report/audit export, which need the audit series. Keyed on the exact
-    config (same policy as StudioHandler._cache_key), so any change to the
-    tree invalidates the cache naturally.
+    config AND a Market Data Hub freshness fingerprint (same policy as
+    ``_cache_key``), so any change to the tree, or a data refresh, both
+    invalidate the cache naturally instead of silently serving a pre-refresh
+    result for the rest of the process's lifetime.
     """
     key = _raw_backtest_key(config)
     with _raw_backtest_cache_lock:
@@ -661,11 +752,6 @@ class StudioHandler(BaseHTTPRequestHandler):
     _artifact_cache: dict[str, dict[str, tuple[bytes, str, str]]] = {}
     _artifact_cache_limit = 4
 
-    @staticmethod
-    def _cache_key(path: str, config: dict[str, Any]) -> str:
-        canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=_as_json)
-        return f"{path}:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
-
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -678,19 +764,17 @@ class StudioHandler(BaseHTTPRequestHandler):
         if path == "/api/models":
             self._json(
                 HTTPStatus.OK,
-                {"ok": True, "directory": str(_store.resolve_models_dir()), "items": _saved_models()},
+                {"ok": True, "database": str(_store.resolve_store_path()), "items": _saved_models()},
             )
             return
         if path.startswith("/api/models/"):
-            filename = Path(unquote(path.removeprefix("/api/models/"))).name
-            model_path = _store.resolve_models_dir() / filename
-            if not filename.endswith(".json") or not model_path.is_file():
+            name = unquote(path.removeprefix("/api/models/"))
+            try:
+                config = _store.read_model(name)
+            except FileNotFoundError:
                 self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Model not found"})
                 return
-            try:
-                self._json(HTTPStatus.OK, json.loads(model_path.read_text(encoding="utf-8")))
-            except json.JSONDecodeError:
-                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "Invalid model JSON"})
+            self._json(HTTPStatus.OK, config)
             return
         if path == "/api/instrument-catalog":
             query = parse_qs(parsed.query).get("q", [""])[0]
@@ -729,10 +813,10 @@ class StudioHandler(BaseHTTPRequestHandler):
                 if not isinstance(config, dict):
                     raise StudioConfigError("model config must be an object")
                 try:
-                    model_path = _store.write_model(name, config)
+                    stored_name = _store.write_model(name, config)
                 except _store.ModelStoreError as exc:
                     raise StudioConfigError(str(exc)) from exc
-                self._json(HTTPStatus.OK, {"ok": True, "name": model_path.stem, "path": str(model_path)})
+                self._json(HTTPStatus.OK, {"ok": True, "name": stored_name})
                 return
             if path == "/api/cache/clear":
                 with self._cache_lock:
@@ -745,19 +829,22 @@ class StudioHandler(BaseHTTPRequestHandler):
             if path == "/api/validate":
                 self._json(HTTPStatus.OK, _v2_validation_payload(config))
             elif path in {"/api/v2/estimate", "/api/v2/backtest", "/api/v2/scientific-study"}:
-                key = self._cache_key(path, config)
+                config_hash = _config_hash(config)
+                data_as_of, data_fingerprint = _data_fingerprint(config)
+                key = _cache_key(path, config_hash, data_fingerprint)
                 with self._cache_lock:
                     cached = self._run_cache.get(key)
                 if cached is not None:
                     self._json(HTTPStatus.OK, {**cached, "cached": True})
                     return
-                disk_cached = _run_cache_store.get_run_result(key)
+                disk_cached = _run_history.get_by_cache_key(key)
                 if disk_cached is not None:
+                    disk_payload = disk_cached["payload"]
                     with self._cache_lock:
                         if len(self._run_cache) >= self._cache_limit and key not in self._run_cache:
                             self._run_cache.pop(next(iter(self._run_cache)))
-                        self._run_cache[key] = disk_cached
-                    self._json(HTTPStatus.OK, {**disk_cached, "cached": True})
+                        self._run_cache[key] = disk_payload
+                    self._json(HTTPStatus.OK, {**disk_payload, "cached": True})
                     return
                 producer = {
                     "/api/v2/estimate": _v2_estimate_payload,
@@ -769,15 +856,29 @@ class StudioHandler(BaseHTTPRequestHandler):
                     if len(self._run_cache) >= self._cache_limit and key not in self._run_cache:
                         self._run_cache.pop(next(iter(self._run_cache)))
                     self._run_cache[key] = payload
-                _run_cache_store.put_run_result(key, payload)
+                weights, metrics = _run_summary_fields(path, payload)
+                _run_history.record_run(
+                    cache_key=key,
+                    path=path,
+                    kind=path.rsplit("/", 1)[-1],
+                    tree_id=_tree_id_for_config(config),
+                    config_hash=config_hash,
+                    data_as_of=data_as_of,
+                    data_fingerprint=data_fingerprint,
+                    weights=weights,
+                    metrics=metrics,
+                    payload=payload,
+                )
                 self._json(HTTPStatus.OK, {**payload, "cached": False})
             elif path in {"/api/v2/audit-bundle", "/api/v2/client-report"}:
                 kind = "audit" if path.endswith("audit-bundle") else "report"
-                key = self._cache_key("/api/v2/artifacts", config)
+                config_hash = _config_hash(config)
+                data_as_of, data_fingerprint = _data_fingerprint(config)
+                key = _cache_key("/api/v2/artifacts", config_hash, data_fingerprint)
                 with self._cache_lock:
                     artifacts = self._artifact_cache.get(key)
                 if artifacts is None and kind == "report":
-                    disk_report = _run_cache_store.get_report(key)
+                    disk_report = _run_history.get_report_artifact(key)
                     if disk_report is not None:
                         body, content_type, filename = disk_report
                         self._binary(HTTPStatus.OK, body, content_type, filename)
@@ -790,23 +891,46 @@ class StudioHandler(BaseHTTPRequestHandler):
                         self._artifact_cache[key] = artifacts
                     # Persist only the (small) HTML report -- the audit ZIP is
                     # multi-MB per entry and deliberately stays in-memory-only,
-                    # see lazyportfolio.v2.run_cache's module docstring.
+                    # see lazyportfolio.v2.run_history's module docstring.
                     report_body, report_ct, report_fn = artifacts["report"]
-                    _run_cache_store.put_report(key, report_body, report_ct, report_fn)
-                    # Best-effort catalog entry -- only for the HTML report
-                    # (never the audit ZIP, matching the persistence policy
-                    # just above), and only right here where the report is
-                    # genuinely (re)generated, never on a cache hit -- a
-                    # re-view of an already-cached report must not insert a
-                    # fresh artifact row every time.
+                    title, summary = _report_artifact_fields(config)
+                    # Best-effort catalog entry into LazyTools' shared artifact
+                    # registry -- only for the HTML report (never the audit
+                    # ZIP, matching the persistence policy just above), and
+                    # only right here where the report is genuinely
+                    # (re)generated, never on a cache hit -- a re-view of an
+                    # already-cached report must not insert a fresh artifact
+                    # row every time. Only fires when the ORIGINATING request
+                    # was for the report, not when an audit-bundle request
+                    # happened to trigger generation of both.
+                    external_id = None
                     if kind == "report":
-                        title, summary = _report_artifact_fields(config)
-                        register_report_artifact(
+                        external_id = register_report_artifact(
                             title=title,
                             summary=summary,
                             tags=["tree-studio"],
                             content=report_body.decode("utf-8"),
                         )
+                    run_id = _run_history.record_run(
+                        cache_key=key,
+                        path="/api/v2/artifacts",
+                        kind="artifacts",
+                        tree_id=_tree_id_for_config(config),
+                        config_hash=config_hash,
+                        data_as_of=data_as_of,
+                        data_fingerprint=data_fingerprint,
+                        weights=None,
+                        metrics=None,
+                        payload={"title": title, "summary": summary},
+                    )
+                    _run_history.attach_artifact(
+                        run_id,
+                        kind="report",
+                        content_type=report_ct,
+                        filename=report_fn,
+                        blob=report_body,
+                        external_artifact_id=external_id,
+                    )
                 body, content_type, filename = artifacts[kind]
                 self._binary(HTTPStatus.OK, body, content_type, filename)
             else:
@@ -823,13 +947,13 @@ class StudioHandler(BaseHTTPRequestHandler):
             if not path.startswith("/api/models/"):
                 self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
                 return
-            name = unquote(path.removeprefix("/api/models/")).removesuffix(".json")
+            name = unquote(path.removeprefix("/api/models/"))
             try:
                 deleted = _store.delete_model(name)
             except FileNotFoundError as exc:
                 self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})
                 return
-            self._json(HTTPStatus.OK, {"ok": True, "name": deleted.stem})
+            self._json(HTTPStatus.OK, {"ok": True, "name": deleted})
         except (StudioConfigError, _store.ModelStoreError, ValueError) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
         except Exception as exc:  # Keep tracebacks in the console, not in the browser.

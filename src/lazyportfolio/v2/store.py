@@ -1,10 +1,17 @@
-"""Shared, file-based persistence for named V2 tree configurations.
+"""Shared, SQLite-backed persistence for named V2 tree configurations.
 
 Both Tree Studio (the local visual editor, ``project/tree_studio.py``) and any
 external caller (LazyTools' MCP ``portfolio_tree_*`` tools) read and write
 through this module, never through their own copy of the logic -- so a tree
-saved by one is immediately visible to the other: same directory, same
-filename sanitization, same validate-before-write gate. Stdlib-only.
+saved by one is immediately visible to the other: same database (shared with
+:mod:`lazyportfolio.v2.run_history` via :mod:`lazyportfolio.v2.db`), same name
+sanitization, same validate-before-write gate. Stdlib-only.
+
+Trees used to be one JSON file per name under ``reports/tree_studio/models/``.
+That directory of loose files is gone -- a tree is now one row in the shared
+``trees`` table, keyed by its sanitized name -- but ``sanitize_model_name``'s
+character policy is unchanged, so an existing name still normalizes exactly
+as it always has.
 """
 
 from __future__ import annotations
@@ -12,20 +19,19 @@ from __future__ import annotations
 import json
 import os
 import re
+from contextlib import closing
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from lazyportfolio.v2 import db as _db
 from lazyportfolio.v2.model import V2Model
 
-#: Same character policy Tree Studio has always used for a model's on-disk
+#: Same character policy Tree Studio has always used for a tree's stored
 #: name: collapse anything else to a hyphen, then trim stray separators.
 _MODEL_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
-
-#: Environment variable both processes read to agree on one shared directory.
-_ENV_VAR = "LAZYPORTFOLIO_TREE_MODELS_DIR"
 
 
 class ModelStoreError(ValueError):
@@ -49,53 +55,41 @@ def _as_json(value: Any) -> Any:
     return value
 
 
-def resolve_models_dir(store_dir: str | os.PathLike[str] | None = None) -> Path:
-    """Resolve the one shared directory saved tree configurations live in.
+def resolve_store_path(store_path: str | os.PathLike[str] | None = None) -> Path:
+    """Resolve the shared database file saved tree configurations live in.
 
-    Precedence: an explicit ``store_dir`` argument, then the ``LAZYPORTFOLIO_TREE_MODELS_DIR``
-    env var (the interop mechanism between Tree Studio and any other caller),
-    then the historical Tree Studio default -- ``<repo>/reports/tree_studio/models``,
-    computed from this installed module rather than a script's ``__file__`` so
-    it resolves correctly however the package is imported.
+    Precedence: an explicit ``store_path`` argument, then the
+    ``LAZYPORTFOLIO_TREE_DB`` env var, then the default -- a sibling of the
+    run-history database, ``<repo>/reports/tree_studio/tree_studio.sqlite3``.
     """
-    if store_dir:
-        return Path(store_dir).resolve()
-    env = os.environ.get(_ENV_VAR)
-    if env:
-        return Path(env).resolve()
-    # .../src/lazyportfolio/v2/store.py -> v2 -> lazyportfolio -> src -> repo root
-    repo_root = Path(__file__).resolve().parents[3]
-    return repo_root / "reports" / "tree_studio" / "models"
+    return _db.resolve_db_path(store_path)
 
 
 def sanitize_model_name(name: Any) -> str:
-    """Reduce a model name to a safe, stable on-disk stem (no extension)."""
+    """Reduce a model name to a safe, stable stored key."""
     cleaned = _MODEL_NAME.sub("-", str(name).strip()).strip(" .-")
     if not cleaned:
         raise ModelStoreError("model name cannot be blank")
     return cleaned[:120]
 
 
-def model_path(name: Any, *, store_dir: str | os.PathLike[str] | None = None) -> Path:
-    """The on-disk path a given model name resolves to (whether or not it exists)."""
-    return resolve_models_dir(store_dir) / f"{sanitize_model_name(name)}.json"
+def list_saved_models(*, store_path: str | os.PathLike[str] | None = None) -> list[dict[str, str]]:
+    """List saved models as ``{"name", "updated_at"}`` pairs, newest first."""
+    with closing(_db.connect(store_path)) as conn:
+        rows = conn.execute(
+            "SELECT name, updated_at FROM trees ORDER BY updated_at DESC"
+        ).fetchall()
+    return [{"name": name, "updated_at": updated_at} for name, updated_at in rows]
 
 
-def list_saved_models(*, store_dir: str | os.PathLike[str] | None = None) -> list[dict[str, str]]:
-    """List saved models as ``{"name", "file"}`` pairs, newest first."""
-    directory = resolve_models_dir(store_dir)
-    if not directory.exists():
-        return []
-    paths = sorted(directory.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
-    return [{"name": path.stem, "file": path.name} for path in paths]
-
-
-def read_model(name: Any, *, store_dir: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+def read_model(name: Any, *, store_path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     """Read a saved model's raw configuration by name (no re-validation)."""
-    path = model_path(name, store_dir=store_dir)
-    if not path.is_file():
-        raise FileNotFoundError(f"no saved model named {sanitize_model_name(name)!r}")
-    loaded: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    key = sanitize_model_name(name)
+    with closing(_db.connect(store_path)) as conn:
+        row = conn.execute("SELECT config FROM trees WHERE name = ?", (key,)).fetchone()
+    if row is None:
+        raise FileNotFoundError(f"no saved model named {key!r}")
+    loaded: dict[str, Any] = json.loads(row[0])
     return loaded
 
 
@@ -103,39 +97,75 @@ def write_model(
     name: Any,
     config: dict[str, Any],
     *,
-    store_dir: str | os.PathLike[str] | None = None,
-) -> Path:
+    store_path: str | os.PathLike[str] | None = None,
+) -> str:
     """Validate ``config`` and persist it; never writes on a validation failure.
 
     Validation is the same gate Tree Studio's own save endpoint has always
     used: constructing ``V2Model.from_config(config)`` and discarding the
     result (this call is for the side-effecting validation, not the model).
+
+    Returns the sanitized name the tree was stored under.
     """
     if not isinstance(config, dict):
         raise ModelStoreError("model config must be an object")
     V2Model.from_config(config)
-    path = model_path(name, store_dir=store_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config, indent=2, default=_as_json) + "\n", encoding="utf-8")
-    return path
+    key = sanitize_model_name(name)
+    now = datetime.now(UTC).isoformat()
+    payload = json.dumps(config, default=_as_json)
+    with closing(_db.connect(store_path)) as conn:
+        conn.execute(
+            "INSERT INTO trees (name, config, created_at, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET "
+            "config = excluded.config, updated_at = excluded.updated_at",
+            (key, payload, now, now),
+        )
+        conn.commit()
+    return key
 
 
-def delete_model(name: Any, *, store_dir: str | os.PathLike[str] | None = None) -> Path:
-    """Delete a saved model by name, returning the path that was removed."""
-    path = model_path(name, store_dir=store_dir)
-    if not path.is_file():
-        raise FileNotFoundError(f"no saved model named {sanitize_model_name(name)!r}")
-    path.unlink()
-    return path
+def delete_model(name: Any, *, store_path: str | os.PathLike[str] | None = None) -> str:
+    """Delete a saved model by name, returning the sanitized name that was removed."""
+    key = sanitize_model_name(name)
+    with closing(_db.connect(store_path)) as conn:
+        cursor = conn.execute("DELETE FROM trees WHERE name = ?", (key,))
+        conn.commit()
+        deleted = cursor.rowcount
+    if not deleted:
+        raise FileNotFoundError(f"no saved model named {key!r}")
+    return key
+
+
+def migrate_legacy_json_models(
+    models_dir: str | os.PathLike[str],
+    *,
+    store_path: str | os.PathLike[str] | None = None,
+) -> list[str]:
+    """One-time import of the pre-SQLite ``*.json`` tree files into the shared store.
+
+    Safe to call more than once: an already-migrated name is simply
+    overwritten with the same content. Source files are left untouched --
+    this only ever adds rows, never deletes the originals. Returns the list
+    of names imported.
+    """
+    directory = Path(models_dir)
+    if not directory.is_dir():
+        return []
+    imported: list[str] = []
+    for path in sorted(directory.glob("*.json")):
+        config = json.loads(path.read_text(encoding="utf-8"))
+        name = write_model(path.stem, config, store_path=store_path)
+        imported.append(name)
+    return imported
 
 
 __all__ = [
     "ModelStoreError",
     "delete_model",
     "list_saved_models",
-    "model_path",
+    "migrate_legacy_json_models",
     "read_model",
-    "resolve_models_dir",
+    "resolve_store_path",
     "sanitize_model_name",
     "write_model",
 ]

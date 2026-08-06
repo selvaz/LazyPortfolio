@@ -96,8 +96,7 @@ def studio(monkeypatch, tmp_path):
     """Import (or reload) tree_studio with isolated model/cache directories,
     then serve it on a real ephemeral localhost port for the duration of the
     test."""
-    monkeypatch.setenv("LAZYPORTFOLIO_TREE_MODELS_DIR", str(tmp_path / "models"))
-    monkeypatch.setenv("LAZYPORTFOLIO_TREE_CACHE_DB", str(tmp_path / "run_cache.sqlite3"))
+    monkeypatch.setenv("LAZYPORTFOLIO_TREE_DB", str(tmp_path / "store.sqlite3"))
     sys.path.insert(0, str(PROJECT_DIR))
     try:
         module = importlib.import_module("tree_studio")
@@ -164,7 +163,7 @@ def test_repeat_request_after_memory_eviction_disk_cache_hit_registers_once(
     assert status1 == 200
 
     # Simulate the in-memory artifact cache having been evicted/restarted --
-    # the disk-backed run_cache (lazyportfolio.v2.run_cache) should still
+    # the DB-backed run history (lazyportfolio.v2.run_history) should still
     # serve the report without re-registering an artifact.
     module.StudioHandler._artifact_cache.clear()
 
