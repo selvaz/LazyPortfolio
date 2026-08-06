@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         "Artifact catalog DB (LazyPortfolio reports, shared cross-repo via LazyTools' registry)",
         "LAZYPORTFOLIO_ARTIFACTS_DB",
     )
-    _ask_optional_path("Tree Studio run-cache DB", "LAZYPORTFOLIO_TREE_CACHE_DB")
+    _ask_optional_path("Tree Studio database (saved trees + run history)", "LAZYPORTFOLIO_TREE_DB")
 
     print("\n==> Verifying imports")
     verify_code = "import lazyportfolio, market_data_hub; print('LazyPortfolio environment OK')"

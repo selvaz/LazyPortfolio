@@ -23,8 +23,8 @@ a condition for the request's success.
 
 Unlike market-data-hub's/LazyCrawler's reports (written to disk and
 registered via ``content_uri``), Tree Studio's client report is never
-written to a file -- it only ever exists as an in-memory/disk-cache blob
-(see ``lazyportfolio.v2.run_cache``). So this module registers the report
+written to a file -- it only ever exists as an in-memory/DB-persisted blob
+(see ``lazyportfolio.v2.run_history``). So this module registers the report
 with ``content=`` (the actual HTML text), not ``content_uri=``.
 
 Whether ``lazytools`` actually resolves to mypy varies by environment (it

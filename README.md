@@ -63,13 +63,18 @@ for testing or a from-scratch integration, not as an alternative production data
 > [`docs/optimizer-remediation-plan.md`](docs/optimizer-remediation-plan.md).
 >
 > **Saved configurations are a shared store, not just a Tree Studio file.**
-> `lazyportfolio.v2.store` resolves one directory — an explicit path, else the
-> `LAZYPORTFOLIO_TREE_MODELS_DIR` env var, else `reports/tree_studio/models/`
-> — that Tree Studio's save/list/load endpoints and any other caller both
-> read and write through. LazyTools' MCP `portfolio_tree_*` tools
-> (`PortfolioTreeTools`) are exactly such a caller: point both processes at
-> the same directory (the env var) and a tree built by one appears in the
-> other immediately, with no export/import step. `lazyportfolio.v2.mode`'s
+> `lazyportfolio.v2.store` resolves one SQLite database — an explicit path,
+> else the `LAZYPORTFOLIO_TREE_DB` env var, else
+> `reports/tree_studio/tree_studio.sqlite3` — that Tree Studio's save/list/load
+> endpoints and any other caller both read and write through. The same
+> database also holds `lazyportfolio.v2.run_history`'s structured run history
+> (tree id, timestamp, data-as-of, config hash, weights, metrics, artifact
+> references) for every estimate/backtest/report, and is registered in
+> LazyTools' DB registry as `lazyportfolio_store`. LazyTools' MCP
+> `portfolio_tree_*` tools (`PortfolioTreeTools`) are exactly such a caller:
+> point both processes at the same database (the env var) and a tree built by
+> one appears in the other immediately, with no export/import step.
+> `lazyportfolio.v2.mode`'s
 > `mode_from_config` is the matching single source of truth for deriving
 > `flat`/`forward`/`forward_backward` from a config's own
 > `backtest.forward_enabled`/`hierarchy_mode`, so the two callers can never
