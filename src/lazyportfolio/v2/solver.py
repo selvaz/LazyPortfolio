@@ -393,6 +393,19 @@ class V2LocalOptimizer:
         def volatility(weights: np.ndarray) -> float:
             return float(sqrt(max(float(weights @ covariance @ weights), 0.0)))
 
+        def realized_volatility(weights: np.ndarray) -> float:
+            # Target/cap/TEV feasibility must be measured with the same risk
+            # measure the target/cap itself is computed from (the reference
+            # series' own historical std, see `_resolve_volatility`), never
+            # the shrunk-covariance-implied figure `volatility()` returns:
+            # shrinkage changes a single-asset "portfolio's" implied variance
+            # relative to that asset's own raw historical variance, so a
+            # 100%-proxy allocation would otherwise fail its own target by
+            # construction. `volatility()` remains the risk measure driving
+            # weight estimation (SLSQP loss for min_risk/max_ratio/
+            # max_utility) -- only target/cap/TEV feasibility switches.
+            return float(np.std(values @ weights, ddof=1))
+
         def tracking_error(weights: np.ndarray) -> float:
             if tracking_reference is None:
                 return 0.0
@@ -420,21 +433,45 @@ class V2LocalOptimizer:
             if constraints.max_tracking_error is not None
             else None
         )
-        if (
+        # Gate every fast path on the *resolved* target/cap/TEV values, not
+        # problem_class.volatility_mode / has_tev: those only look at
+        # constraints.volatility_target/max_volatility, which stay None for
+        # a father_proxy/benchmark-referenced target (the common case for
+        # non-root nodes) even though target_periodic above is then
+        # non-None. Gating on the raw classifier fields let a fast path fire
+        # on vol-constrained nodes and silently ignore the constraint.
+        linear_constraints_only = (
             regime == "none"
-            and problem_class.objective == "max_return"
             and target_periodic is None
             and cap_periodic is None
             and tev_periodic is None
+        )
+        # Deterministic seed for the common case where a father/benchmark
+        # reference series *is* one of this node's own candidate instruments
+        # (e.g. a Precious Metals node holding GLD, SLV, PPLT, PALL with
+        # father proxy GLD): 100% on that instrument is provably feasible
+        # and provably matches its own reference by construction. Hand SLSQP
+        # that witness directly via the reference series' own `.name`
+        # (set by pandas when `_risk_reference` slices `returns[node.proxy]`
+        # -- a multi-weight benchmark series has no single `.name` and is
+        # correctly skipped here) rather than relying on multi-start to
+        # rediscover it by luck.
+        proxy_seed_names: set[str] = set()
+        for reference_series in (
+            target_reference_series,
+            cap_reference_series,
+            tracking_reference_series,
         ):
-            # Gate on the *resolved* target/cap/TEV values, not
-            # problem_class.volatility_mode / has_tev: those only look at
-            # constraints.volatility_target/max_volatility, which stay None
-            # for a father_proxy/benchmark-referenced target (the common
-            # case for non-root nodes) even though target_periodic above is
-            # then non-None. Gating on the raw classifier fields let the LP
-            # route fire on vol-constrained nodes and silently ignore the
-            # constraint.
+            candidate_name = getattr(reference_series, "name", None)
+            if isinstance(candidate_name, str) and candidate_name in names:
+                proxy_seed_names.add(candidate_name)
+        proxy_seeds: list[np.ndarray] = []
+        for proxy_name in sorted(proxy_seed_names):
+            seed = np.zeros(len(names))
+            seed[names.index(proxy_name)] = 1.0
+            if np.all(seed >= lower - 1e-9) and np.all(seed <= upper + 1e-9):
+                proxy_seeds.append(seed)
+        if linear_constraints_only and problem_class.objective == "max_return":
             lp_result = self._solve_lp_max_return(
                 names,
                 means,
@@ -455,6 +492,30 @@ class V2LocalOptimizer:
             # region should always succeed) falls through to the audited
             # SLSQP path below rather than raising, so an LP hiccup never
             # aborts a solve the existing multi-start search could handle.
+        elif linear_constraints_only and problem_class.objective in (
+            "min_risk",
+            "max_utility",
+        ):
+            qp_result = self._solve_qp_convex(
+                objective,
+                names,
+                means,
+                excess_means,
+                lower,
+                upper,
+                covariance,
+                periods_per_year,
+                risk_aversion,
+                risk_free_rate,
+                constraints,
+                resolved_mean_estimator,
+                view_details,
+                problem_class.label,
+            )
+            if qp_result is not None:
+                return qp_result
+            # OSQP missing or failing falls through to the audited SLSQP
+            # path below, exactly like the LP route's own fallback.
         start = self._initial_weights(names, lower, upper, reference_weights)
         hard_constraints: list[dict[str, Any]] = [
             {"type": "eq", "fun": lambda weights: float(weights.sum() - 1.0)}
@@ -463,7 +524,7 @@ class V2LocalOptimizer:
             hard_constraints.append(
                 {
                     "type": "ineq",
-                    "fun": lambda weights: cap_periodic - volatility(weights),
+                    "fun": lambda weights: cap_periodic - realized_volatility(weights),
                 }
             )
         base_constraints = list(hard_constraints)
@@ -483,7 +544,9 @@ class V2LocalOptimizer:
             scipy_constraints.append(
                 {
                     "type": "eq",
-                    "fun": lambda weights: volatility(weights) - target_periodic,
+                    "fun": lambda weights: (
+                        realized_volatility(weights) - target_periodic
+                    ),
                 }
             )
 
@@ -510,17 +573,19 @@ class V2LocalOptimizer:
             self._RANDOM_RESTART_COUNT,
             self._RANDOM_RESTART_SEED,
         )
-        candidates = [start]
+        candidates = [start, *proxy_seeds]
         if target_periodic is not None:
             target_cap_constraints = [
                 *base_constraints,
                 {
                     "type": "ineq",
-                    "fun": lambda weights: target_periodic - volatility(weights),
+                    "fun": lambda weights: (
+                        target_periodic - realized_volatility(weights)
+                    ),
                 },
             ]
             cap_results = []
-            for cap_start in [start, *boundary_starts[:2]]:
+            for cap_start in [start, *proxy_seeds, *boundary_starts[:2]]:
                 cap_result = minimize(
                     loss,
                     cap_start,
@@ -533,7 +598,7 @@ class V2LocalOptimizer:
                     cap_result.x,
                     lower,
                     upper,
-                    volatility,
+                    realized_volatility,
                     None,
                     target_periodic,
                     tracking_error,
@@ -543,19 +608,19 @@ class V2LocalOptimizer:
             binding = [
                 result
                 for result in cap_results
-                if abs(volatility(result.x) - target_periodic) <= 2e-6
+                if abs(realized_volatility(result.x) - target_periodic) <= 2e-6
             ]
             if binding:
                 candidates = [min(binding, key=lambda item: float(item.fun)).x]
             else:
                 candidates.extend(
                     self._frontier_starts(
-                        [start, *boundary_starts[:2]],
+                        [start, *proxy_seeds, *boundary_starts[:2]],
                         means,
                         lower,
                         upper,
                         base_constraints,
-                        volatility,
+                        realized_volatility,
                         target_periodic,
                         tracking_error,
                         tev_periodic,
@@ -581,7 +646,7 @@ class V2LocalOptimizer:
                 result.x,
                 lower,
                 upper,
-                volatility,
+                realized_volatility,
                 target_periodic,
                 cap_periodic,
                 tracking_error,
@@ -594,12 +659,12 @@ class V2LocalOptimizer:
             result = min(accepted, key=lambda item: float(item.fun))
         elif target_periodic is not None or tev_periodic is not None:
             result = self._lexicographic_fallback(
-                [start, *boundary_starts, *randomized_starts],
+                [start, *proxy_seeds, *boundary_starts, *randomized_starts],
                 loss,
                 lower,
                 upper,
                 hard_constraints,
-                volatility,
+                realized_volatility,
                 target_periodic,
                 tracking_error,
                 tev_periodic,
@@ -623,8 +688,18 @@ class V2LocalOptimizer:
         weights = np.asarray(result.x, dtype=float)
         weights[np.abs(weights) < 1e-10] = 0.0
         weights /= weights.sum()
-        self._audit_hard_constraints(weights, lower, upper, cap_periodic, volatility)
-        actual_vol = volatility(weights) * annualizer
+        self._audit_hard_constraints(
+            weights, lower, upper, cap_periodic, realized_volatility
+        )
+        # `actual_vol` (realized-measure) is what gets reported and compared
+        # against target_annual/cap_annual -- both of those are themselves
+        # realized-measure figures (`_resolve_volatility`), so this keeps
+        # reporting apples-to-apples with what was actually enforced above.
+        # `actual_vol_model` (shrunk-covariance) stays the risk figure that
+        # fed weight estimation, used only for max_ratio/max_utility/min_risk
+        # objective values -- never redefine what those objectives measured.
+        actual_vol = realized_volatility(weights) * annualizer
+        actual_vol_model = volatility(weights) * annualizer
         actual_tev = (
             tracking_error(weights) * annualizer
             if tracking_reference is not None
@@ -641,15 +716,15 @@ class V2LocalOptimizer:
         elif effective_objective == "max_ratio":
             objective_value = (
                 expected_return_annualized - risk_free_rate
-            ) / max(actual_vol, 1e-12)
+            ) / max(actual_vol_model, 1e-12)
         elif effective_objective == "max_utility":
             objective_value = (
                 expected_return_annualized
                 - risk_free_rate
-                - (risk_aversion / 2.0) * actual_vol**2
+                - (risk_aversion / 2.0) * actual_vol_model**2
             )
         else:
-            objective_value = actual_vol
+            objective_value = actual_vol_model
         soft_violation = 0.0
         if target_annual is not None:
             soft_violation += (
@@ -692,7 +767,7 @@ class V2LocalOptimizer:
                 if target_periodic is None
                 else (
                     "matched"
-                    if abs(volatility(weights) - target_periodic) <= 2e-6
+                    if abs(realized_volatility(weights) - target_periodic) <= 2e-6
                     else "nearest_feasible"
                 )
             ),
@@ -838,6 +913,172 @@ class V2LocalOptimizer:
             volatility_target_mode=constraints.volatility_target_mode,
             global_optimality_claim=True,
             solver_strategy="lp_highs",
+            restart_candidate_count=1,
+            restart_objective_spread=0.0,
+            problem_class=problem_class_label,
+            solver_status="ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason="",
+        )
+        return dict(zip(names, weights, strict=True)), audit
+
+    @staticmethod
+    def _solve_qp_convex(
+        objective: str,
+        names: list[str],
+        means: np.ndarray,
+        excess_means: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        covariance: np.ndarray,
+        periods_per_year: float,
+        risk_aversion: float,
+        risk_free_rate: float,
+        constraints: V2Constraints,
+        resolved_mean_estimator: str,
+        view_details: tuple[dict[str, Any], ...],
+        problem_class_label: str,
+    ) -> tuple[dict[str, float], V2Audit] | None:
+        """Exact QP fast path: ``objective`` in ``{'min_risk', 'max_utility'}``,
+        no vol target/cap, no TEV, no financing, only budget + box bounds --
+        v3 performance roadmap Phase B (docs/hierarchical-optimizer-performance-plan.md).
+        Both objectives are convex quadratics over linear equality/bound
+        constraints, a well-posed QP; OSQP is an exact convex solver for it,
+        unlike SLSQP's non-convex multi-start heuristic, so this route can
+        honestly claim global optimality.
+
+        Mirrors the periodic-scale objective SLSQP's ``loss()`` minimizes for
+        these two objectives exactly (same sign convention, same
+        ``covariance``/``excess_means`` -- already view-adjusted by
+        ``apply_views()`` upstream, never recomputed here):
+        ``min_risk`` minimizes ``w'Sigma w``; ``max_utility`` minimizes
+        ``(risk_aversion/2) w'Sigma w - excess_means'w``.
+
+        Returns ``None`` (never raises) if OSQP isn't installed or doesn't
+        report success, so the caller falls back to the audited SLSQP path
+        rather than silently accept a non-optimal result.
+        """
+        try:
+            import osqp
+        except ImportError:  # pragma: no cover - optional fast path
+            return None
+        import scipy.sparse as sp
+
+        count = len(names)
+        # OSQP minimizes 0.5 x'Px + q'x, so P must equal 2x the target
+        # quadratic form's own matrix (min_risk's w'Sigma w has none of its
+        # own leading factor; max_utility's loss carries risk_aversion/2).
+        # p_full already includes that factor of 2 -- average(p_full,
+        # p_full.T) only defensively symmetrizes a not-quite-symmetric
+        # covariance, it must NOT add another factor of 2 on top (summing
+        # instead of averaging silently doubled max_utility's effective
+        # risk_aversion, verified live against an independent multi-start
+        # SLSQP cross-check: OSQP converged to a real, different, and worse
+        # KKT point until this was fixed).
+        if objective == "min_risk":
+            p_full = 2.0 * covariance
+            linear = np.zeros(count)
+        else:
+            p_full = risk_aversion * covariance
+            linear = -excess_means
+        p_matrix = sp.csc_matrix(0.5 * (p_full + p_full.T))
+        a_matrix = sp.csc_matrix(np.vstack([np.ones((1, count)), np.eye(count)]))
+        constraint_lower = np.concatenate([[1.0], lower])
+        constraint_upper = np.concatenate([[1.0], upper])
+
+        started = time.perf_counter()
+        solver = osqp.OSQP()
+        solver.setup(
+            P=p_matrix,
+            q=linear,
+            A=a_matrix,
+            l=constraint_lower,
+            u=constraint_upper,
+            verbose=False,
+            # OSQP's default eps_abs/eps_rel (1e-3) are tuned for
+            # O(1)-scale problems; a periodic covariance's entries are
+            # O(1e-4) to O(1e-5), so the default tolerance lets OSQP report
+            # "solved" tens of iterations before it reaches the true
+            # optimum (verified live: default settings left ~30% excess
+            # variance on a real fixture). Tighten to the estimator's own
+            # precision and polish the active-set solution so this route's
+            # global-optimality claim actually holds.
+            eps_abs=1e-10,
+            eps_rel=1e-10,
+            max_iter=20_000,
+            polishing=True,
+        )
+        # raise_error=False: this route already inspects result.info.status
+        # itself and returns None (falling back to SLSQP) on anything but
+        # "solved" -- never let OSQP raise instead of returning a status.
+        result = solver.solve(raise_error=False)
+        solve_seconds = time.perf_counter() - started
+        if result.info.status != "solved":
+            return None
+
+        weights = np.asarray(result.x, dtype=float)
+        weights[np.abs(weights) < 1e-10] = 0.0
+        total = weights.sum()
+        if total <= 0.0:
+            return None
+        weights /= total
+        annualizer = sqrt(periods_per_year)
+        actual_vol = (
+            float(sqrt(max(float(weights @ covariance @ weights), 0.0))) * annualizer
+        )
+        expected_return_annualized = float(means @ weights) * periods_per_year
+        if objective == "max_utility":
+            objective_value = (
+                expected_return_annualized
+                - risk_free_rate
+                - (risk_aversion / 2.0) * actual_vol**2
+            )
+        else:
+            objective_value = actual_vol
+        posterior_all = (
+            constraints.view_covariance_policy == "posterior_all" and bool(constraints.views)
+        )
+        audit = V2Audit(
+            target_reference="none",
+            target_volatility=None,
+            actual_volatility=actual_vol,
+            cap_reference="none",
+            volatility_cap=None,
+            tracking_error_limit=None,
+            actual_tracking_error=None,
+            minimum_slack={
+                name: float(weights[index] - lower[index]) for index, name in enumerate(names)
+            },
+            maximum_slack={
+                name: float(upper[index] - weights[index]) for index, name in enumerate(names)
+            },
+            sum_weights=float(weights.sum()),
+            solver_message=str(result.info.status),
+            target_status="not_requested",
+            tracking_error_status="not_requested",
+            configured_objective=objective,
+            effective_objective=objective,
+            expected_return_annualized=expected_return_annualized,
+            objective_value=objective_value,
+            soft_constraint_violation=0.0,
+            configured_mean_estimator=constraints.mean_estimator,
+            resolved_mean_estimator=resolved_mean_estimator,
+            views_applied=len(view_details),
+            view_details=view_details,
+            risk_aversion=risk_aversion,
+            risk_free_rate=risk_free_rate,
+            covariance_estimator=constraints.covariance_estimator,
+            covariance_estimator_class={
+                "shrunk_fixed": "ShrunkCovariance",
+                "ledoit_wolf": "LedoitWolf",
+            }[constraints.covariance_estimator],
+            risk_covariance_role="posterior" if posterior_all else "prior",
+            objective_covariance_role="posterior" if posterior_all else "prior",
+            view_covariance_policy=constraints.view_covariance_policy,
+            volatility_target_mode=constraints.volatility_target_mode,
+            global_optimality_claim=True,
+            solver_strategy="qp_osqp",
             restart_candidate_count=1,
             restart_objective_spread=0.0,
             problem_class=problem_class_label,
