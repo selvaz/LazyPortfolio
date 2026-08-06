@@ -36,6 +36,12 @@ class OptimizationDataBackend(Protocol):
 class MarketDataHubOptimizationBackend:
     """market-data-hub implementation of :class:`OptimizationDataBackend`."""
 
+    #: Longest interior gap (in trading rows) that a local-market closure is
+    #: allowed to span before it's treated as missing data rather than a
+    #: holiday. Covers multi-day closures (e.g. a national holiday cluster)
+    #: without masking a genuine, longer-running data outage.
+    _MAX_HOLIDAY_GAP = 5
+
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path
 
@@ -90,12 +96,20 @@ class MarketDataHubOptimizationBackend:
         prices = prices.rename(columns=dict(zip(symbols, labels, strict=True)))[labels]
 
         # The hub's wide price frame is the union of observed trading dates.
-        # Forward-fill only across that already-observed grid: a component that
-        # did not trade on a date on which another market did is held at its
-        # latest tradable price.  ``fill_method=None`` prevents pandas from
-        # applying a second, implicit fill while deriving returns.
-        aligned_prices = prices.ffill()
+        # Forward-fill only across that already-observed grid, and only for
+        # interior gaps up to `_MAX_HOLIDAY_GAP` rows: a component that did
+        # not trade on a date on which another market did is held at its
+        # latest tradable price. A gap at the *live edge* — the instrument's
+        # most recent price hasn't arrived yet — is left as NaN rather than
+        # reported as today's price, so it reads as missing (and gets
+        # dropped downstream) instead of a fabricated flat/zero return.
+        # ``fill_method=None`` prevents pandas from applying a second,
+        # implicit fill while deriving returns.
+        missing = prices.isna()
+        trailing_gap = missing[::-1].cumprod().astype(bool)[::-1]
+        aligned_prices = prices.ffill(limit=self._MAX_HOLIDAY_GAP).mask(trailing_gap)
         frame = aligned_prices.pct_change(fill_method=None)
+        filled_cells = int((missing.to_numpy() & ~aligned_prices.isna().to_numpy()).sum())
         return OptimizationDataset(
             returns=frame,
             metadata={
@@ -107,8 +121,10 @@ class MarketDataHubOptimizationBackend:
                 "return_type": "simple",
                 "source_field": "adj_close",
                 "price_alignment": "forward_fill_shared_trading_grid",
+                "price_alignment_max_gap_days": self._MAX_HOLIDAY_GAP,
                 "price_rows": len(prices),
-                "aligned_price_rows": len(aligned_prices),
+                "filled_price_cells": filled_cells,
+                "trailing_gap_cells": int(trailing_gap.to_numpy().sum()),
                 "n_rows": len(frame),
                 **metadata,
             },
