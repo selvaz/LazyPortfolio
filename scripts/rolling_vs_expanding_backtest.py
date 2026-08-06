@@ -22,7 +22,8 @@ LazyTools' TelegramClient, using TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID from
 the environment (User-level env vars on this machine).
 
 Run: python scripts/rolling_vs_expanding_backtest.py [tree name ...]
-(default: Global Multi-Asset, Global Multi-Asset - TEV 7-10-5)
+(default: Global Multi-Asset, Global Multi-Asset - TEV 7-10-5, and their
+"- Leverage 150" variants -- cash_enabled + max_leverage=1.5 on every node)
 """
 
 from __future__ import annotations
@@ -45,6 +46,8 @@ from lazyportfolio.v2 import run_history, store  # noqa: E402
 DEFAULT_TREES = [
     "Global Multi-Asset",
     "Global Multi-Asset - TEV 7-10-5",
+    "Global Multi-Asset - Leverage 150",
+    "Global Multi-Asset - TEV 7-10-5 - Leverage 150",
 ]
 MAX_WORKERS = 4
 LAZYTOOLS_SRC = ROOT.parent / "LazyTools" / "src"
