@@ -1,0 +1,176 @@
+{
+  "root_id": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "name": "70/30 global",
+      "children": [
+        "equity",
+        "node-1786007702407"
+      ],
+      "instruments": [],
+      "proxy": "",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "cash_enabled": false,
+        "max_leverage": "1",
+        "borrow_spread_bps": "",
+        "volatility_reference": "benchmark",
+        "vol_target": "",
+        "volatility_target_policy": "nearest_feasible",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "representation": "synthetic",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "id": "equity",
+      "name": "Equity sleeve",
+      "children": [],
+      "instruments": [
+        "VEA",
+        "EEM"
+      ],
+      "proxy": "ACWI",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "cash_enabled": false,
+        "max_leverage": "1",
+        "borrow_spread_bps": "",
+        "volatility_reference": "father_proxy",
+        "vol_target": "",
+        "volatility_target_policy": "nearest_feasible",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "representation": "proxy",
+      "inherits": "none",
+      "benchmarks": []
+    },
+    {
+      "id": "node-1786007702407",
+      "name": "AGG sleeve",
+      "children": [],
+      "instruments": [
+        "AGG",
+        "CEMB"
+      ],
+      "representation": "proxy",
+      "proxy": "BNDX",
+      "inherits": "none",
+      "goal": {
+        "objective": "max_return"
+      },
+      "constraints": {
+        "cash_enabled": false,
+        "max_leverage": "1",
+        "borrow_spread_bps": "",
+        "min_weights": {},
+        "max_weights": {},
+        "per_asset_cap": "",
+        "max_turnover": "",
+        "volatility_reference": "father_proxy",
+        "vol_target": "",
+        "volatility_target_policy": "nearest_feasible",
+        "max_volatility_reference": "none",
+        "max_volatility": "",
+        "max_tracking_error": "",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "mean_reference_weights": null,
+        "risk_aversion": "",
+        "risk_free_rate": "",
+        "views": [],
+        "view_tau": ""
+      },
+      "benchmarks": []
+    }
+  ],
+  "data": {
+    "start": "2015-01-01",
+    "end": "",
+    "risk_free_annual": "0",
+    "borrow_spread_bps": "0"
+  },
+  "backtest": {
+    "id": "tree-studio-minimal",
+    "train_size": 104,
+    "rebalance_frequency": "M",
+    "estimation_frequency": "W",
+    "transaction_cost_bps": "0",
+    "forward_enabled": true,
+    "hierarchy_mode": "synthetic_reconstructed",
+    "benchmark": {
+      "id": "B0",
+      "name": "ACWI / AGG 70/30",
+      "weights": {
+        "ACWI": "0.7",
+        "AGG": "0.3"
+      }
+    },
+    "scientific_study": {
+      "enabled": false
+    }
+  },
+  "legacy": {
+    "id": "legacy-benchmark-vol",
+    "universe": [
+      "SPY",
+      "GLD",
+      "TLT",
+      "BCI"
+    ],
+    "estimation_frequency": "W",
+    "rebalance_frequency": "M",
+    "train_size": 156,
+    "per_asset_cap": "0.6",
+    "transaction_cost_bps": "10",
+    "benchmark": {
+      "id": "legacy-70-30",
+      "name": "SPY / TLT 70/30",
+      "weights": {
+        "SPY": "0.7",
+        "TLT": "0.3"
+      }
+    }
+  }
+}

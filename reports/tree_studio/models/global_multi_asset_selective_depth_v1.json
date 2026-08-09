@@ -1,0 +1,96 @@
+{
+  "root_id": "global_multi_asset",
+  "currency": "USD",
+  "nodes": [
+    {
+      "id": "global_multi_asset",
+      "name": "Global Multi-Asset - Selective Depth",
+      "children": ["global_equity", "emerging_debt"],
+      "instruments": ["AGG", "BNDX", "DBC", "GLD", "QAI"],
+      "proxy": "",
+      "goal": {"objective": "max_return"},
+      "constraints": {
+        "min_weights": {},
+        "max_weights": {"EMB": 0.15},
+        "cash_enabled": false,
+        "max_leverage": 1.0,
+        "borrow_spread_bps": 0.0,
+        "risk_free_rate": 0.0,
+        "volatility_reference": "benchmark",
+        "volatility_target_mode": "exact",
+        "volatility_target_policy": "nearest_feasible",
+        "max_tracking_error": 0.07,
+        "tracking_error_reference": "benchmark",
+        "tracking_error_policy": "nearest_feasible",
+        "max_volatility_reference": "none",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "covariance_estimator": "shrunk_fixed"
+      }
+    },
+    {
+      "id": "global_equity",
+      "name": "Global Equity",
+      "children": ["emerging_markets"],
+      "instruments": ["SPY", "VEA"],
+      "proxy": "ACWI",
+      "goal": {"objective": "max_return"},
+      "constraints": {
+        "min_weights": {}, "max_weights": {}, "cash_enabled": false,
+        "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0,
+        "volatility_reference": "father_proxy", "volatility_target_mode": "exact",
+        "volatility_target_policy": "nearest_feasible", "max_tracking_error": 0.10,
+        "tracking_error_reference": "father_proxy", "tracking_error_policy": "nearest_feasible",
+        "max_volatility_reference": "none", "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"
+      }
+    },
+    {
+      "id": "emerging_markets",
+      "name": "Emerging Markets",
+      "children": [],
+      "instruments": ["MCHI", "INDA", "EWT", "EWY"],
+      "proxy": "VWO",
+      "goal": {"objective": "max_return"},
+      "constraints": {
+        "min_weights": {}, "max_weights": {}, "cash_enabled": false,
+        "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0,
+        "volatility_reference": "father_proxy", "volatility_target_mode": "exact",
+        "volatility_target_policy": "nearest_feasible", "max_tracking_error": 0.10,
+        "tracking_error_reference": "father_proxy", "tracking_error_policy": "nearest_feasible",
+        "max_volatility_reference": "none", "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"
+      }
+    },
+    {
+      "id": "emerging_debt",
+      "name": "Emerging Debt",
+      "children": [],
+      "instruments": ["CEMB", "HYEM", "EMLC"],
+      "proxy": "EMB",
+      "goal": {"objective": "max_return"},
+      "constraints": {
+        "min_weights": {}, "max_weights": {}, "cash_enabled": false,
+        "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0,
+        "volatility_reference": "father_proxy", "volatility_target_mode": "exact",
+        "volatility_target_policy": "nearest_feasible", "max_tracking_error": 0.05,
+        "tracking_error_reference": "father_proxy", "tracking_error_policy": "nearest_feasible",
+        "max_volatility_reference": "none", "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"
+      }
+    }
+  ],
+  "data": {"start": "2016-08-01", "end": "", "risk_free_annual": 0.0, "borrow_spread_bps": 0.0},
+  "backtest": {
+    "id": "global-multi-asset-selective-depth-v1",
+    "train_size": 102,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "M",
+    "transaction_cost_bps": 0.0,
+    "forward_enabled": true,
+    "hierarchy_mode": "synthetic_reconstructed",
+    "benchmark": {"id": "B0", "name": "Global 60/40 (ACWI/AGG/BNDX)", "weights": {"ACWI": 0.6, "AGG": 0.2, "BNDX": 0.2}},
+    "scientific_study": {"enabled": false}
+  }
+}
