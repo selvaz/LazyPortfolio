@@ -1,4 +1,4 @@
-"""docs/node-copilot-operational-plan.md §13 Fase 2 exit criterion: a view
+"""docs/node-advisor-operational-plan.md §13 Fase 2 exit criterion: a view
 cannot be validated at the wrong economic level, and NodeContext resolves
 correctly on the pillar-level fixture, not just the multi-level one -- this
 is where Fase 0's manually-built fixtures.py contexts get *proven* against
@@ -16,8 +16,8 @@ from fixtures import (
     pillar_level_equity_node_context,
 )
 
-from lazyportfolio.copilot.contracts import ProposedView
-from lazyportfolio.copilot.node_universe import (
+from lazyportfolio.advisor.contracts import ProposedView
+from lazyportfolio.advisor.node_universe import (
     NodeNotFoundError,
     apply_views_to_config,
     resolve_node_context,

@@ -1,5 +1,5 @@
 """Proposal approval: the single atomic transaction that turns an approved
-``ChangeProposal`` into a new tree revision (docs/node-copilot-operational-plan.md §8.3).
+``ChangeProposal`` into a new tree revision (docs/node-advisor-operational-plan.md §8.3).
 
 All 11 steps run inside one sqlite transaction: read proposal+status,
 constant-time hash check, expiry check, head-vs-base-revision check,
@@ -21,10 +21,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from lazyportfolio.copilot.canonical import content_hash
-from lazyportfolio.copilot.contracts import ChangeProposal, SnapshotDescriptor
-from lazyportfolio.copilot.node_universe import apply_views_to_config
-from lazyportfolio.copilot.patch import validate_patch
+from lazyportfolio.advisor.canonical import content_hash
+from lazyportfolio.advisor.contracts import ChangeProposal, SnapshotDescriptor
+from lazyportfolio.advisor.node_universe import apply_views_to_config
+from lazyportfolio.advisor.patch import validate_patch
 from lazyportfolio.v2 import db as _db
 from lazyportfolio.v2.model import V2Model
 
@@ -71,7 +71,7 @@ def _trust_stored_fingerprint(snapshot: SnapshotDescriptor) -> str:
 
     Correct only for fixture-driven proposals with no real market data
     behind them. Fase 2's ``SnapshotService`` must supply a real
-    implementation before this runs against live data (docs/adr/0001-node-copilot-architecture.md).
+    implementation before this runs against live data (docs/adr/0001-node-advisor-architecture.md).
     """
 
     return snapshot.fingerprint

@@ -1,4 +1,4 @@
-"""Public snapshot/fingerprint service (docs/node-copilot-operational-plan.md §6.2).
+"""Public snapshot/fingerprint service (docs/node-advisor-operational-plan.md §6.2).
 
 Moved -- not reimplemented -- from ``project/tree_studio.py``'s private
 ``_config_hash``/``_data_fingerprint``/``_config_instruments``: those were
@@ -22,12 +22,12 @@ from datetime import date
 from typing import Any
 from uuid import uuid4
 
+from lazyportfolio.advisor.contracts import SnapshotDescriptor
 from lazyportfolio.backend import (
     MarketDataHubOptimizationBackend,
     OptimizationDataBackend,
     OptimizationDataset,
 )
-from lazyportfolio.copilot.contracts import SnapshotDescriptor
 from lazyportfolio.v2.model import V2Model
 from lazyportfolio.v2.store import _as_json
 
@@ -118,11 +118,11 @@ def load_dataset(
     Same logic as the former ``project/tree_studio.py:_load_instruments``,
     raising :class:`SnapshotLoadError` instead of Tree Studio's own
     ``StudioConfigError`` -- this module has no dependency on ``project/``
-    (docs/adr/0001-node-copilot-architecture.md Decision 1), so Tree
+    (docs/adr/0001-node-advisor-architecture.md Decision 1), so Tree
     Studio's wrapper catches this and re-raises its own exception type.
 
     ``backend`` defaults to the real Market Data Hub, but is injectable --
-    LazyTools' ``NodeCopilotReadTools`` (and any test) needs a fake one, the
+    LazyTools' ``NodeAdvisorReadTools`` (and any test) needs a fake one, the
     same reason ``PortfolioTreeTools``/``PortfolioOptimizationTools`` already
     accept a ``backend`` constructor argument instead of hardcoding one.
     """

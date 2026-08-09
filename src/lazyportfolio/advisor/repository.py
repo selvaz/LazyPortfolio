@@ -1,11 +1,11 @@
-"""Append-only tree revisions (docs/node-copilot-operational-plan.md §5.1/§13 Fase 1).
+"""Append-only tree revisions (docs/node-advisor-operational-plan.md §5.1/§13 Fase 1).
 
 Every save is a new ``tree_revisions`` row; the current head is a
 compare-and-swap on ``tree_heads.head_revision_id``. The pattern mirrors
 LazyFin's already-shipped ``StorePortfolioLedger.compare_and_swap``
 (``LazyFin/src/lazyfin/kernel/persist.py``), reimplemented here rather than
 imported since LazyPortfolio does not depend on LazyFin
-(docs/adr/0001-node-copilot-architecture.md Decision 1).
+(docs/adr/0001-node-advisor-architecture.md Decision 1).
 
 Function-based, one connection per call, mirroring
 :mod:`lazyportfolio.v2.store` and :mod:`lazyportfolio.v2.run_history`'s
@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from lazyportfolio.copilot.canonical import content_hash
+from lazyportfolio.advisor.canonical import content_hash
 from lazyportfolio.v2 import db as _db
 
 

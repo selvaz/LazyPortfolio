@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from lazyportfolio.copilot.canonical import (
+from lazyportfolio.advisor.canonical import (
     NonCanonicalValueError,
     canonical_json,
     content_hash,
@@ -56,12 +56,12 @@ def test_nan_and_infinity_are_rejected_not_silently_stringified() -> None:
 
 
 def test_two_different_producers_writing_the_same_content_hash_identically() -> None:
-    """Simulates the Node Copilot and a future batch producer independently
+    """Simulates the Node Advisor and a future batch producer independently
     building the same logical payload with different key orders -- the
-    invariant docs/adr/0001-node-copilot-architecture.md Decision 3 depends
+    invariant docs/adr/0001-node-advisor-architecture.md Decision 3 depends
     on for comparing proposals across producers."""
 
-    node_copilot_payload = {
+    node_advisor_payload = {
         "kind": "replace_node_views",
         "node_id": "equity",
         "views": [{"confidence": 0.6, "expected_return": 0.02}],
@@ -71,4 +71,4 @@ def test_two_different_producers_writing_the_same_content_hash_identically() -> 
         "node_id": "equity",
         "kind": "replace_node_views",
     }
-    assert content_hash(node_copilot_payload) == content_hash(committee_payload)
+    assert content_hash(node_advisor_payload) == content_hash(committee_payload)

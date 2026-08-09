@@ -1,10 +1,10 @@
-"""One-load/two-solve counterfactual evaluator (docs/node-copilot-operational-plan.md §6.3).
+"""One-load/two-solve counterfactual evaluator (docs/node-advisor-operational-plan.md §6.3).
 
 Security/correctness invariant (§11): baseline and variant must share the
 exact same in-memory dataset -- never independently reloaded, or a
 mid-comparison data refresh could make them silently disagree on what they
 are comparing. ``dataset`` is therefore always a parameter here, never
-loaded inside this module (:func:`lazyportfolio.copilot.snapshot.load_snapshot`
+loaded inside this module (:func:`lazyportfolio.advisor.snapshot.load_snapshot`
 is the one place that loads it, once, for both solves).
 """
 
@@ -13,9 +13,9 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from lazyportfolio.advisor.contracts import CounterfactualResult, ProposedView
+from lazyportfolio.advisor.node_universe import apply_views_to_config, find_node
 from lazyportfolio.backend import OptimizationDataset
-from lazyportfolio.copilot.contracts import CounterfactualResult, ProposedView
-from lazyportfolio.copilot.node_universe import apply_views_to_config, find_node
 from lazyportfolio.v2.contracts import Mode
 from lazyportfolio.v2.hierarchy import HierarchicalV2Estimator
 from lazyportfolio.v2.model import V2Model
@@ -35,7 +35,7 @@ def evaluate_view_counterfactual(
     same ``dataset``, and return the diff (§6.3's 8-step sequence).
 
     Never mutates or persists ``base_config``: the variant is a deep copy
-    (:func:`~lazyportfolio.copilot.node_universe.apply_views_to_config`)
+    (:func:`~lazyportfolio.advisor.node_universe.apply_views_to_config`)
     that swaps ``node_id``'s ``constraints.views`` for ``proposed_views``
     and nothing else -- the same single-node, single-field scope §11's
     patch allowlist enforces at apply time, exercised here before any

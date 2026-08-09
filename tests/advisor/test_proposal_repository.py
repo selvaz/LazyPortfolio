@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from lazyportfolio.copilot.contracts import (
+from lazyportfolio.advisor.contracts import (
     ChangeProposal,
     CounterfactualResult,
     JsonPatchOperation,
@@ -14,14 +14,14 @@ from lazyportfolio.copilot.contracts import (
     SnapshotDescriptor,
     ValidationResult,
 )
-from lazyportfolio.copilot.proposal_repository import (
+from lazyportfolio.advisor.proposal_repository import (
     ConcurrentProposalWrite,
     create,
     get,
     list_by_tree,
     transition,
 )
-from lazyportfolio.copilot.state_machine import IllegalProposalTransition
+from lazyportfolio.advisor.state_machine import IllegalProposalTransition
 
 _NOW = datetime(2026, 8, 9, tzinfo=UTC)
 
@@ -54,7 +54,7 @@ def _proposal(*, tree_id: UUID | None = None, node_id: str = "equity") -> Change
         ],
         rationale="test",
         model_provenance=ModelProvenance(
-            producer_kind="interactive_chat", producer_id="node-copilot", model="test-model"
+            producer_kind="interactive_chat", producer_id="node-advisor", model="test-model"
         ),
         validation=ValidationResult(valid=True),
         counterfactual=CounterfactualResult(),

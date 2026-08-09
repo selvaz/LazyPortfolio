@@ -1,8 +1,8 @@
-"""docs/node-copilot-operational-plan.md §13 Fase 2 exit criterion: Tree
+"""docs/node-advisor-operational-plan.md §13 Fase 2 exit criterion: Tree
 Studio and LazyTools must emit the identical fingerprint for the same
 config. ``project/tree_studio.py``'s ``_config_hash``/``_data_fingerprint``/
 ``_config_instruments``/``_load_instruments`` were moved (not reimplemented)
-into ``lazyportfolio.copilot.snapshot`` -- these tests pin that the module
+into ``lazyportfolio.advisor.snapshot`` -- these tests pin that the module
 script's wrappers still delegate, byte-for-byte, rather than having drifted
 back into a second copy of the logic.
 
@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from lazyportfolio.copilot import snapshot
+from lazyportfolio.advisor import snapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_DIR = REPO_ROOT / "project"

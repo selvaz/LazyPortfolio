@@ -1,4 +1,4 @@
-"""Node-scoped universe resolution and view validation (docs/node-copilot-operational-plan.md §6.1).
+"""Node-scoped universe resolution and view validation (docs/node-advisor-operational-plan.md §6.1).
 
 Reuses ``V2Model``/``V2Node`` identity as already resolved by
 ``V2Model.from_config`` -- ``allowed_view_instruments`` is built from a
@@ -15,7 +15,7 @@ import math
 from typing import Any
 from uuid import UUID
 
-from lazyportfolio.copilot.contracts import (
+from lazyportfolio.advisor.contracts import (
     NodeComponent,
     NodeContext,
     ProposedView,
@@ -35,8 +35,8 @@ class NodeNotFoundError(ValueError):
 def find_node(model: V2Model, node_id: str) -> V2Node:
     """The :class:`V2Node` with this ``id``, or raise :class:`NodeNotFoundError`.
 
-    Public: shared by :mod:`lazyportfolio.copilot.approval_service` and
-    :mod:`lazyportfolio.copilot.counterfactual` too, both of which need the
+    Public: shared by :mod:`lazyportfolio.advisor.approval_service` and
+    :mod:`lazyportfolio.advisor.counterfactual` too, both of which need the
     node's own ``.name`` -- ``V2Estimate.node_results`` is keyed by node
     *name*, not ``id`` (see ``lazyportfolio.v2.validation._validate_tree_structure``'s
     docstring) -- so "look up a node by id" is not this module's private
@@ -68,7 +68,7 @@ def resolve_node_context(
     """Build the canonical :class:`NodeContext` for one node of ``config``.
 
     ``tree_id``/``revision_id`` identify the caller's already-known
-    revision (from :mod:`lazyportfolio.copilot.repository`) -- a raw V2
+    revision (from :mod:`lazyportfolio.advisor.repository`) -- a raw V2
     config dict carries no identity of its own, so this function cannot
     derive them; it only resolves what depends on the config's *content*.
     """
@@ -274,8 +274,8 @@ def apply_views_to_config(
     """Return a deep copy of ``config`` with ``node_id``'s ``constraints.views``
     replaced by ``views`` -- nothing else in the tree changes.
 
-    Shared by :mod:`lazyportfolio.copilot.approval_service` (applying an
-    approved proposal) and :mod:`lazyportfolio.copilot.counterfactual`
+    Shared by :mod:`lazyportfolio.advisor.approval_service` (applying an
+    approved proposal) and :mod:`lazyportfolio.advisor.counterfactual`
     (building the variant to solve) so both stay byte-for-byte in agreement
     on what "apply this node's views" means, instead of each carrying its
     own copy of the same patch logic.

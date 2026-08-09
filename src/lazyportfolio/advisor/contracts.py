@@ -1,8 +1,8 @@
-"""Node Copilot canonical contracts.
+"""Node Advisor canonical contracts.
 
-Every model here mirrors a section of ``docs/node-copilot-operational-plan.md``
+Every model here mirrors a section of ``docs/node-advisor-operational-plan.md``
 one field at a time -- these are not free-form data classes, they are the
-contract the rest of the Node Copilot's services (Fase 1+) validate against.
+contract the rest of the Node Advisor's services (Fase 1+) validate against.
 Reuses :class:`lazyportfolio.models._PortfolioModel` (``extra="forbid"``,
 ``validate_default=True``) as the shared base, instead of a second private
 base class, so a typo in a field name fails validation the same way it
@@ -19,7 +19,7 @@ from pydantic import Field
 
 from lazyportfolio.models import _PortfolioModel
 
-#: docs/node-copilot-operational-plan.md §4.5 -- the full set of states a
+#: docs/node-advisor-operational-plan.md §4.5 -- the full set of states a
 #: ChangeProposal can be in. Transition legality lives in state_machine.py,
 #: not here -- this is only the vocabulary.
 ProposalStatus = Literal[
@@ -38,10 +38,10 @@ ProposalStatus = Literal[
 ]
 
 #: §3.4 point 3 -- who produced a proposal: a human conversation (the Node
-#: Copilot MVP), or a scheduled batch job (the future Investment Committee).
+#: Advisor MVP), or a scheduled batch job (the future Investment Committee).
 ProducerKind = Literal["interactive_chat", "scheduled_batch"]
 
-#: Mirrors lazyportfolio.v2.contracts.Mode without importing it: the copilot
+#: Mirrors lazyportfolio.v2.contracts.Mode without importing it: the advisor
 #: package only ever carries mode as a descriptive string on NodeContext, it
 #: never feeds it back into the V2 solver directly.
 Mode = Literal["flat", "forward", "forward_backward"]
@@ -128,7 +128,7 @@ class NodeContext(_PortfolioModel):
 
 
 class ModelProvenance(_PortfolioModel):
-    """§3.4 point 3 / §4.3 -- distinguishes an interactive Node Copilot
+    """§3.4 point 3 / §4.3 -- distinguishes an interactive Node Advisor
     conversation from a scheduled batch producer (the future committee)."""
 
     producer_kind: ProducerKind
@@ -147,7 +147,7 @@ class ProposedView(_PortfolioModel):
     instruments: dict[str, float] = Field(min_length=1)
     expected_return: float
     confidence: float = Field(gt=0.0, le=1.0)
-    source: str = "node-copilot"
+    source: str = "node-advisor"
     rationale: str
 
 
@@ -213,7 +213,7 @@ class ChangeProposal(_PortfolioModel):
     MVP registers only ``"replace_node_views"``, and the type must not
     change when a second kind (e.g. a future committee producer) is added.
     ``batch_id`` is nullable and groups proposals from the same producer
-    run (§3.4 point 2); the Node Copilot's own conversational flow always
+    run (§3.4 point 2); the Node Advisor's own conversational flow always
     leaves it ``None``.
     """
 

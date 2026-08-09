@@ -1,4 +1,4 @@
-"""ChangeProposal state machine (docs/node-copilot-operational-plan.md §4.5).
+"""ChangeProposal state machine (docs/node-advisor-operational-plan.md §4.5).
 
 Transitions are enforced here so the rule exists and is testable
 independently of any database -- Fase 1's ``ProposalRepository`` wraps
@@ -8,7 +8,7 @@ but the legality of a transition is not itself a database concern.
 
 from __future__ import annotations
 
-from lazyportfolio.copilot.contracts import ProposalStatus
+from lazyportfolio.advisor.contracts import ProposalStatus
 
 #: §4.5's transition diagram, encoded as legal-successor sets. A status with
 #: an empty set is terminal: no further transition is ever legal from it.

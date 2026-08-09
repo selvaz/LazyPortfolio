@@ -1,7 +1,7 @@
 import pytest
 
-from lazyportfolio.copilot.contracts import ProposalStatus
-from lazyportfolio.copilot.state_machine import (
+from lazyportfolio.advisor.contracts import ProposalStatus
+from lazyportfolio.advisor.state_machine import (
     TERMINAL_STATUSES,
     IllegalProposalTransition,
     legal_next_statuses,

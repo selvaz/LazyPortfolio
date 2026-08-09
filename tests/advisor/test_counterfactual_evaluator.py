@@ -1,4 +1,4 @@
-"""docs/node-copilot-operational-plan.md §13 Fase 2 exit criteria for the
+"""docs/node-advisor-operational-plan.md §13 Fase 2 exit criteria for the
 counterfactual evaluator: baseline and variant share the same dataset,
 empty proposed_views reproduce the baseline exactly, and deltas/turnover
 are internally consistent."""
@@ -11,9 +11,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from lazyportfolio.advisor.contracts import ProposedView
+from lazyportfolio.advisor.counterfactual import evaluate_view_counterfactual
 from lazyportfolio.backend import OptimizationDataset
-from lazyportfolio.copilot.contracts import ProposedView
-from lazyportfolio.copilot.counterfactual import evaluate_view_counterfactual
 
 
 def _config() -> dict[str, Any]:
@@ -39,7 +39,7 @@ def _config() -> dict[str, Any]:
                 # expected-return vector, so a Black-Litterman view can move
                 # its solved weights. min_risk/hrp ignore expected returns
                 # entirely regardless of view_covariance_policy -- see
-                # lazyportfolio.copilot.node_universe's "no_effect_on_weights"
+                # lazyportfolio.advisor.node_universe's "no_effect_on_weights"
                 # rule, which this config would otherwise trip.
                 "goal": {"objective": "max_ratio"},
                 "constraints": {},

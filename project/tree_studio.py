@@ -34,10 +34,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from tree_studio_v2.exports import build_audit_bundle, build_client_report
 
+from lazyportfolio.advisor import snapshot as _snapshot
 from lazyportfolio.artifact_registry import register_report_artifact
 from lazyportfolio.backend import OptimizationDataset
 from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns
-from lazyportfolio.copilot import snapshot as _snapshot
 from lazyportfolio.hierarchical_v2 import (
     HierarchicalV2Backtester,
     HierarchicalV2Estimator,
@@ -72,8 +72,8 @@ def _saved_models() -> list[dict[str, str]]:
 
 
 def _config_instruments(model: V2Model) -> list[str]:
-    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.config_instruments``
-    (docs/node-copilot-operational-plan.md §6.2) so LazyTools computes the
+    """Thin wrapper: moved to ``lazyportfolio.advisor.snapshot.config_instruments``
+    (docs/node-advisor-operational-plan.md §6.2) so LazyTools computes the
     identical instrument set from the same code, not a second copy of it."""
     return _snapshot.config_instruments(model)
 
@@ -85,14 +85,14 @@ def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
 
 
 def _config_hash(config: dict[str, Any]) -> str:
-    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.config_hash``
-    (docs/node-copilot-operational-plan.md §6.2)."""
+    """Thin wrapper: moved to ``lazyportfolio.advisor.snapshot.config_hash``
+    (docs/node-advisor-operational-plan.md §6.2)."""
     return _snapshot.config_hash(config)
 
 
 def _data_fingerprint(config: dict[str, Any]) -> tuple[str | None, str]:
-    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.data_fingerprint``
-    (docs/node-copilot-operational-plan.md §6.2) so Tree Studio and LazyTools
+    """Thin wrapper: moved to ``lazyportfolio.advisor.snapshot.data_fingerprint``
+    (docs/node-advisor-operational-plan.md §6.2) so Tree Studio and LazyTools
     compute the identical freshness signal from the same code, not a second
     copy of it. See that function's docstring for the coverage_report/
     degradation rationale, unchanged by the move."""
@@ -144,13 +144,13 @@ def _run_summary_fields(path: str, payload: dict[str, Any]) -> tuple[Any, Any]:
 def _load_instruments(
     instruments: list[str], data: dict[str, Any], currency: str
 ) -> OptimizationDataset:
-    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.load_dataset``
-    (docs/node-copilot-operational-plan.md §6.2), so the counterfactual
+    """Thin wrapper: moved to ``lazyportfolio.advisor.snapshot.load_dataset``
+    (docs/node-advisor-operational-plan.md §6.2), so the counterfactual
     evaluator's baseline/variant solves load through the identical function
     Tree Studio's own estimate/backtest endpoints use. Translates
     ``SnapshotLoadError`` to this module's own ``StudioConfigError`` --
-    ``lazyportfolio.copilot`` has no dependency on ``project/``
-    (docs/adr/0001-node-copilot-architecture.md Decision 1), so it cannot
+    ``lazyportfolio.advisor`` has no dependency on ``project/``
+    (docs/adr/0001-node-advisor-architecture.md Decision 1), so it cannot
     raise Tree Studio's exception type itself."""
     try:
         return _snapshot.load_dataset(instruments, data, currency)

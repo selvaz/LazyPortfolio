@@ -1,4 +1,4 @@
-"""Fase 0 exit criterion (docs/adr/0001-node-copilot-architecture.md
+"""Fase 0 exit criterion (docs/adr/0001-node-advisor-architecture.md
 Decision 3 / plan §3.4 point 5): a NodeContext built for a first-level
 pillar node must validate against the same contract, with the same field
 semantics, as one built for a deeper interior node. The automated resolver

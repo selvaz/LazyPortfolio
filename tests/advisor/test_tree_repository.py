@@ -1,4 +1,4 @@
-"""docs/node-copilot-operational-plan.md §13 Fase 1 exit criteria: every save
+"""docs/node-advisor-operational-plan.md §13 Fase 1 exit criteria: every save
 creates a revision, no overwrite loses history, two concurrent applies
 cannot both succeed."""
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from lazyportfolio.copilot.repository import (
+from lazyportfolio.advisor.repository import (
     ConcurrentTreeWrite,
     create_tree,
     get_head,

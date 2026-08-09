@@ -1,4 +1,4 @@
-# Node Copilot per Tree Studio — valutazione architetturale e piano operativo
+# Node Advisor per Tree Studio — valutazione architetturale e piano operativo
 
 **Stato:** finale, approvato per implementazione  
 **Data di analisi:** 2026-08-09  
@@ -8,7 +8,7 @@
 
 ## 1. Decisione esecutiva
 
-La direzione di prodotto è valida e coerente con l'ecosistema: un Copilot contestuale per il nodo selezionato è più utile e più controllabile di un agente generale sul portafoglio. Anche la scelta di un `Plan` LazyBridge deterministico, invece di uno swarm autonomo, è corretta.
+La direzione di prodotto è valida e coerente con l'ecosistema: un Advisor contestuale per il nodo selezionato è più utile e più controllabile di un agente generale sul portafoglio. Anche la scelta di un `Plan` LazyBridge deterministico, invece di uno swarm autonomo, è corretta.
 
 La proposta non è però implementabile in sicurezza come semplice aggiunta di una chat all'attuale Tree Studio. Prima servono quattro fondazioni:
 
@@ -86,10 +86,10 @@ Capacità riusabili:
 Gap da chiudere:
 
 - `PortfolioTreeTools` usa `allow_write` anche per estimate/backtest, benché siano compute read-only; vanno separati `allow_compute` e `allow_persist`;
-- il pipeline `macro_views` è universe-wide, scrive regimi, produce report e può inviare Telegram: non va collegato direttamente al Node Copilot; si riusano i blocchi di ricerca e i modelli, non la pipeline completa;
+- il pipeline `macro_views` è universe-wide, scrive regimi, produce report e può inviare Telegram: non va collegato direttamente al Node Advisor; si riusano i blocchi di ricerca e i modelli, non la pipeline completa;
 - manca un `NodeContext` canonico costruito da LazyPortfolio;
 - manca un tool controfattuale che garantisca lo stesso dataset in memoria per i due solve;
-- l'attuale view synthesis chiede copertura di tutti i ticker: per un Copilot conversazionale è una policy sbagliata; deve produrre zero o più view giustificate, senza forzare una view per ogni componente;
+- l'attuale view synthesis chiede copertura di tutti i ticker: per un Advisor conversazionale è una policy sbagliata; deve produrre zero o più view giustificate, senza forzare una view per ogni componente;
 - il Codex Engine via app-server è ancora dichiarato non verificato live: nell'MVP usare i connector CLI read-only già consolidati o ClaudeCodeEngine, mantenendo il reviewer opzionale.
 
 ## 3. Architettura target e ownership
@@ -104,23 +104,23 @@ Gap da chiudere:
 | Runtime Agent/Plan/Store/Session | LazyBridge | riuso senza modifiche core nell'MVP |
 | Provider data/registry/regimi/code-review | LazyTools | nuovi provider stretti e privilege-separated |
 | Prezzi e freshness di origine | market-data-hub | source of record; nessuna write implicita |
-| Statistiche/regimi | LazyStats/LazyTools | read-only nell'MVP del Copilot |
+| Statistiche/regimi | LazyStats/LazyTools | read-only nell'MVP del Advisor |
 | News/cache locale | LazyCrawler | evidenza non fidata e point-in-time quando disponibile |
 
-LazyPortfolio core non deve importare LazyBridge o LazyTools. Il composition root del Copilot vive nell'app Tree Studio o, se cresce oltre il locale single-user, in un futuro package applicativo separato.
+LazyPortfolio core non deve importare LazyBridge o LazyTools. Il composition root del Advisor vive nell'app Tree Studio o, se cresce oltre il locale single-user, in un futuro package applicativo separato.
 
 ### 3.2 Componenti logici
 
 ```text
 Tree Studio UI
   ├─ editor e risultati V2 esistenti
-  └─ pannello Node Copilot
+  └─ pannello Node Advisor
        ├─ REST: conversazioni, messaggi, proposte, approval
        └─ SSE: eventi del job e token di risposta
 
 Tree Studio application service
   ├─ NodeContextService
-  ├─ CopilotJobService + worker
+  ├─ AdvisorJobService + worker
   ├─ ProposalService
   └─ ApprovalApplicationService
 
@@ -139,7 +139,7 @@ LazyPortfolio domain/quant
   └─ apply atomico con CAS
 ```
 
-### 3.3 Identità del Copilot
+### 3.3 Identità del Advisor
 
 La chiave logica è:
 
@@ -153,12 +153,12 @@ Per installazione locale single-user, `user_id` può essere un valore stabile `l
 
 ### 3.4 Producer-agnostic contracts (predisposizione per l'Investment Committee)
 
-Il Node Copilot è il primo produttore di `ChangeProposal`, non l'unico previsto. Il futuro Investment Committee (processo giornaliero, portfolio-wide, descritto in `investment-process-top-down-etf.md`) dovrà produrre proposte sugli stessi nodi usando lo stesso contratto di validazione/snapshot/approvazione, senza un secondo sistema parallelo. Questo impone quattro vincoli, tutti a costo marginale nullo se fissati ora e costosi da retrofittare dopo:
+Il Node Advisor è il primo produttore di `ChangeProposal`, non l'unico previsto. Il futuro Investment Committee (processo giornaliero, portfolio-wide, descritto in `investment-process-top-down-etf.md`) dovrà produrre proposte sugli stessi nodi usando lo stesso contratto di validazione/snapshot/approvazione, senza un secondo sistema parallelo. Questo impone quattro vincoli, tutti a costo marginale nullo se fissati ora e costosi da retrofittare dopo:
 
 1. **`ChangeProposal.kind` è una stringa validata contro un registro di validator, non un `Literal` chiuso.** L'MVP registra un solo validator (`replace_node_views`); aggiungere in futuro un `kind` per proposte del committee (es. `committee_tilt_proposal`) è una nuova voce nel registro, non una migrazione di schema o un cambio del tipo di colonna.
-2. **Le proposte hanno un `batch_id` opzionale (nullable) che le raggruppa.** Il Node Copilot conversazionale genera tipicamente proposte con `batch_id = NULL` (un nodo, una richiesta umana). Il committee genera in una singola run più proposte correlate su nodi diversi (es. un pillar equity e un pillar bond nello stesso giro decisionale): `batch_id` le lega senza forzare un apply atomico multi-nodo, che resta fuori scope MVP. La UI di approvazione può mostrare "queste N proposte appartengono alla stessa run" già dalla Fase 1, anche se il primo produttore reale del campo arriva solo con il committee.
-3. **`ModelProvenance` distingue esplicitamente il tipo di produttore** (`producer_kind: Literal["interactive_chat", "scheduled_batch"]`, più `producer_id` libero, es. `node-copilot` o `investment-committee`). Non è solo un campo di audit: la UI e le policy di budget (§9.3) possono trattare diversamente una proposta nata da una conversazione umana e una nata da un job notturno, senza dover ispezionare l'origine per euristica.
-4. **Il service layer (`NodeContextService`, `CopilotJobService`, `ProposalService`) non deve assumere una richiesta HTTP con utente davanti.** Va scritto come funzioni/servizi richiamabili sia da un handler REST sia da un job schedulato (es. da LazyPulse), con l'identità del chiamante passata esplicitamente come parametro — mai letta da un contesto di sessione web implicito. Questo è un vincolo di dependency injection nella Fase 3, non un problema di calcolo.
+2. **Le proposte hanno un `batch_id` opzionale (nullable) che le raggruppa.** Il Node Advisor conversazionale genera tipicamente proposte con `batch_id = NULL` (un nodo, una richiesta umana). Il committee genera in una singola run più proposte correlate su nodi diversi (es. un pillar equity e un pillar bond nello stesso giro decisionale): `batch_id` le lega senza forzare un apply atomico multi-nodo, che resta fuori scope MVP. La UI di approvazione può mostrare "queste N proposte appartengono alla stessa run" già dalla Fase 1, anche se il primo produttore reale del campo arriva solo con il committee.
+3. **`ModelProvenance` distingue esplicitamente il tipo di produttore** (`producer_kind: Literal["interactive_chat", "scheduled_batch"]`, più `producer_id` libero, es. `node-advisor` o `investment-committee`). Non è solo un campo di audit: la UI e le policy di budget (§9.3) possono trattare diversamente una proposta nata da una conversazione umana e una nata da un job notturno, senza dover ispezionare l'origine per euristica.
+4. **Il service layer (`NodeContextService`, `AdvisorJobService`, `ProposalService`) non deve assumere una richiesta HTTP con utente davanti.** Va scritto come funzioni/servizi richiamabili sia da un handler REST sia da un job schedulato (es. da LazyPulse), con l'identità del chiamante passata esplicitamente come parametro — mai letta da un contesto di sessione web implicito. Questo è un vincolo di dependency injection nella Fase 3, non un problema di calcolo.
 
 Un quinto punto è di verifica, non di contratto: la Fase 0 deve includere una golden fixture con un nodo "pillar" (es. equity/bond/commodity a livello root, coerente con `investment-process-top-down-etf.md`) oltre alle fixture multi-livello già previste, per confermare che `NodeUniverseResolver` e `NodeContext` funzionano identicamente a quel livello di albero. Se emergono differenze semantiche, è meglio scoprirle qui che alla Fase 4.
 
@@ -232,7 +232,7 @@ Campi minimi aggiuntivi rispetto alla bozza iniziale:
 ```python
 class ModelProvenance(BaseModel):
     producer_kind: Literal["interactive_chat", "scheduled_batch"]
-    producer_id: str  # es. "node-copilot", "investment-committee"
+    producer_id: str  # es. "node-advisor", "investment-committee"
     model: str
     model_version: str | None = None
     prompt_version: str | None = None
@@ -241,7 +241,7 @@ class ChangeProposal(BaseModel):
     id: UUID
     schema_version: Literal["1.0"]
     kind: str  # validato contro un registro di validator; MVP registra solo "replace_node_views"
-    batch_id: UUID | None  # raggruppa proposte correlate della stessa run; NULL per il Copilot conversazionale MVP
+    batch_id: UUID | None  # raggruppa proposte correlate della stessa run; NULL per il Advisor conversazionale MVP
     supersedes_proposal_id: UUID | None
     tree_id: UUID
     base_revision_id: UUID
@@ -314,7 +314,7 @@ Tabelle:
 
 - `trees` (esistente, **mai modificata**: `name TEXT PRIMARY KEY, config, created_at, updated_at` — vedi nota sotto);
 - `tree_revisions(revision_id, tree_id, parent_revision_id, config_json, config_hash, created_at, actor_type, actor_id, reason)`;
-- `tree_heads(tree_id, head_revision_id)` — la testa corrente di ogni tree, bersaglio del CAS; tabella nuova invece di una colonna `head_revision_id` aggiunta a `trees`, così `trees` resta byte-per-byte invariata e nessun chiamante esistente di `list_saved_models`/`read_model`/`write_model` richiede revisione (implementato in Fase 1, PR LP-02; vedi `docs/node-copilot-schema-migration-draft.md`);
+- `tree_heads(tree_id, head_revision_id)` — la testa corrente di ogni tree, bersaglio del CAS; tabella nuova invece di una colonna `head_revision_id` aggiunta a `trees`, così `trees` resta byte-per-byte invariata e nessun chiamante esistente di `list_saved_models`/`read_model`/`write_model` richiede revisione (implementato in Fase 1, PR LP-02; vedi `docs/node-advisor-schema-migration-draft.md`);
 - `agent_conversations(conversation_id, tree_id, node_id, user_id, created_at, updated_at)`;
 - `agent_messages(message_id, conversation_id, role, content_json, revision_id, data_fingerprint, created_at)`;
 - `agent_jobs(job_id, conversation_id, request_message_id, kind, status, checkpoint_key, session_db_path, budget_json, started_at, heartbeat_at, finished_at, error_json)`;
@@ -346,7 +346,7 @@ Non fare dual-write prolungato tra due rappresentazioni autorevoli: introdurrebb
 ### 5.3 Ruolo di Memory, Store e Session
 
 - **Conversazione:** `agent_messages`; il worker seleziona gli ultimi turni e un summary versionato per costruire una `Memory` temporanea.
-- **Workflow:** `Store(db=...)` con chiavi `copilot/{job_id}/...` e checkpoint key unica.
+- **Workflow:** `Store(db=...)` con chiavi `advisor/{job_id}/...` e checkpoint key unica.
 - **Audit tecnico:** `Session(db=...)`; `agent_jobs` conserva il riferimento al file/session run.
 - **Stato autorevole:** tabelle revision/proposal/approval; mai dedotto dagli eventi Session.
 
@@ -444,9 +444,9 @@ PortfolioTreeTools(
 - validate/list/load sono sempre read-only;
 - estimate/backtest dipendono da `allow_compute`;
 - save dipende da `allow_persist`;
-- delete è un privilegio distinto e non viene mai dato al Copilot.
+- delete è un privilegio distinto e non viene mai dato al Advisor.
 
-Nuovo provider `NodeCopilotReadTools`:
+Nuovo provider `NodeAdvisorReadTools`:
 
 - `tree_get_node_context`;
 - `tree_get_parent_context`;
@@ -504,7 +504,7 @@ Le serie raw non entrano nel prompt. Gli step quantitativi si scambiano riferime
 Endpoint suggerito:
 
 ```text
-POST /api/copilot/proposals/{proposal_id}/approve
+POST /api/advisor/proposals/{proposal_id}/approve
 {
   "proposal_hash": "sha256:...",
   "idempotency_key": "...",
@@ -541,16 +541,16 @@ Se revision o dati sono cambiati, rispondere `409 Conflict` con codice `stale_re
 
 ### 9.1 API minima
 
-- `GET /api/trees/{tree_id}/nodes/{node_id}/copilot/context`;
-- `GET/POST /api/copilot/conversations`;
-- `GET /api/copilot/conversations/{id}/messages`;
-- `POST /api/copilot/conversations/{id}/messages` → crea job;
-- `GET /api/copilot/jobs/{job_id}`;
-- `GET /api/copilot/jobs/{job_id}/events` → SSE;
-- `GET /api/copilot/proposals/{proposal_id}`;
-- `POST /api/copilot/proposals/{id}/approve`;
-- `POST /api/copilot/proposals/{id}/reject`;
-- `POST /api/copilot/proposals/{id}/revise`.
+- `GET /api/trees/{tree_id}/nodes/{node_id}/advisor/context`;
+- `GET/POST /api/advisor/conversations`;
+- `GET /api/advisor/conversations/{id}/messages`;
+- `POST /api/advisor/conversations/{id}/messages` → crea job;
+- `GET /api/advisor/jobs/{job_id}`;
+- `GET /api/advisor/jobs/{job_id}/events` → SSE;
+- `GET /api/advisor/proposals/{proposal_id}`;
+- `POST /api/advisor/proposals/{id}/approve`;
+- `POST /api/advisor/proposals/{id}/reject`;
+- `POST /api/advisor/proposals/{id}/revise`.
 
 ### 9.2 Worker locale MVP
 
@@ -566,7 +566,7 @@ Per il deployment locale iniziale è sufficiente:
 - timeout e cancellation cooperativa;
 - nessun `await_approval` che occupi un worker.
 
-Prima del Copilot conviene estrarre dal monolite `tree_studio.py` moduli `api`, `services`, `repositories` e `jobs`, mantenendo lo stesso entry point. Non serve introdurre subito un framework web, ma SSE, routing e test diventano più semplici con FastAPI/Starlette; la scelta va presa con un breve ADR nella Fase 0.
+Prima del Advisor conviene estrarre dal monolite `tree_studio.py` moduli `api`, `services`, `repositories` e `jobs`, mantenendo lo stesso entry point. Non serve introdurre subito un framework web, ma SSE, routing e test diventano più semplici con FastAPI/Starlette; la scelta va presa con un breve ADR nella Fase 0.
 
 ### 9.3 Budget di default
 
@@ -633,7 +633,7 @@ Invarianti da codificare come test, non solo prompt:
 - excerpt e contenuto completo hanno limiti di dimensione;
 - i path per Claude/Codex sono allowlist esplicite;
 - nessuna write su Market Data Hub è implicita;
-- nessun invio esterno è disponibile al Copilot MVP;
+- nessun invio esterno è disponibile al Advisor MVP;
 - SQLite apre `PRAGMA foreign_keys=ON`, WAL e busy timeout;
 - audit e log non sono l'unica copia della configurazione applicata.
 
@@ -742,7 +742,7 @@ Deliverable:
 - `CounterfactualEvaluator` one-load/two-solve;
 - delta schema e turnover convention;
 - refactor `PortfolioTreeTools` dei privilegi;
-- `NodeCopilotReadTools` con bounded outputs.
+- `NodeAdvisorReadTools` con bounded outputs.
 
 Exit criteria:
 
@@ -770,7 +770,7 @@ Exit criteria:
 - restart durante ogni stato critico recuperabile;
 - nessun lavoro lungo nel request thread.
 
-### Fase 4 — Node Copilot conversazionale e ricerca (8–12 giorni)
+### Fase 4 — Node Advisor conversazionale e ricerca (8–12 giorni)
 
 Repository: Tree Studio integration + LazyTools; LazyBridge riusato.
 
@@ -828,7 +828,7 @@ PR piccoli e verificabili:
 4. **LP-04:** node universe resolver e validation error codes.
 5. **LP-05:** snapshot service centralizzato e refactor caller.
 6. **LP-06:** counterfactual evaluator e delta contract.
-7. **LT-01:** split privilegi `PortfolioTreeTools` + tool read-only Copilot.
+7. **LT-01:** split privilegi `PortfolioTreeTools` + tool read-only Advisor.
 8. **LP-07:** job/conversation API e worker.
 9. **LP-08:** pannello UI e vertical slice deterministico.
 10. **LP/LT-09:** LazyBridge Agent/Plan, ricerca e synthesis.
@@ -890,7 +890,7 @@ Se questo vertical slice non è solido, aggiungere chat e ricerca rende soltanto
 
 ## 18. Conclusione
 
-Il Node Copilot deve essere un sistema di **proposal preparation**, non un portfolio manager autonomo. Il disegno finale mantiene tre autorità separate:
+Il Node Advisor deve essere un sistema di **proposal preparation**, non un portfolio manager autonomo. Il disegno finale mantiene tre autorità separate:
 
 - LazyBridge orchestra conversazione, ricerca e sintesi;
 - LazyPortfolio definisce universo, validazione, snapshot, calcolo e revisioni;
