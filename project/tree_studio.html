@@ -476,6 +476,7 @@
   (function () {
     const $c = (id) => document.getElementById(id);
     let activeConversationId = null;
+    let activeConversationKey = null; // `${treeId}::${nodeId}` the active conversation was opened for
     let pollTimer = null;
 
     function logLine(containerId, text) {
@@ -613,9 +614,11 @@
         return;
       }
       try {
-        if (!activeConversationId) {
+        const key = treeId + '::' + nodeId;
+        if (!activeConversationId || activeConversationKey !== key) {
           const conversation = await postJson('/api/advisor/conversations', { tree_id: treeId, node_id: nodeId });
           activeConversationId = conversation.conversation_id;
+          activeConversationKey = key;
         }
         logLine('advisorChatLog', 'Inviato: ' + views.length + ' view su ' + nodeId);
         const response = await postJson('/api/advisor/conversations/' + activeConversationId + '/messages', {
