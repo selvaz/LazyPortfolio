@@ -111,6 +111,46 @@ def _research_tools() -> list[Any]:
     return [*DataHubTools().as_tools(), *StatisticalAnalysisTools().as_tools()]
 
 
+def _advisor_session() -> Any:
+    """A ``Session`` whose redactor composes LazyBridge's default secret
+    redaction with :mod:`lazyportfolio.advisor.redaction`'s PII redaction
+    (docs/node-advisor-operational-plan.md §11/§13 Fase 5: "Session usa
+    redazione custom per PII oltre alla redazione segreti default" --
+    LazyBridge's own default only covers credential-shaped secrets, never
+    PII, by design; see ``lazybridge/session.py``'s ``redact_secrets``
+    docstring).
+
+    In-memory only (no ``db=``) -- this session exists so any event log a
+    caller later turns on (``verbose=True``, an exporter) is redacted from
+    the start, not to introduce a new persisted log file of its own. The
+    actual Node Advisor audit trail is the domain repositories
+    (conversations/proposals/revisions), already queryable end to end
+    since Fase 1/3.
+    """
+
+    from lazybridge import Session
+    from lazybridge.session import redact_secrets
+
+    from lazyportfolio.advisor.redaction import redact_pii
+
+    def _redact(payload: dict[str, Any]) -> dict[str, Any]:
+        return redact_secrets(_redact_pii_walk(payload, redact_pii))
+
+    return Session(redact=_redact)
+
+
+def _redact_pii_walk(node: Any, redactor: Any) -> Any:
+    if isinstance(node, str):
+        return redactor(node)
+    if isinstance(node, dict):
+        return {k: _redact_pii_walk(v, redactor) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_redact_pii_walk(x, redactor) for x in node]
+    if isinstance(node, tuple):
+        return tuple(_redact_pii_walk(x, redactor) for x in node)
+    return node
+
+
 def _prepare_view_proposal_tools(
     *,
     backend: OptimizationDataBackend | None = None,
@@ -161,6 +201,7 @@ def run_advisor_turn(
         tools=_prepare_view_proposal_tools(backend=backend, store_path=db_path),
         output=AdvisorTurnResult,
         name="node-advisor",
+        session=_advisor_session(),
     )
     prompt = (
         f"NodeContext (authoritative, current state):\n{context_json}\n\n"
@@ -169,7 +210,9 @@ def run_advisor_turn(
     envelope = agent(prompt)
     if envelope.error is not None:
         raise RuntimeError(f"Node Advisor LLM call failed: {envelope.error}")
-    result: AdvisorTurnResult = envelope.payload
+    payload = envelope.payload
+    assert payload is not None, "envelope.error is None, so payload must be set"
+    result: AdvisorTurnResult = payload
 
     if result.route == "explain" or not result.proposed_views:
         return {"route": "explain", "message": result.message, "proposal": None}

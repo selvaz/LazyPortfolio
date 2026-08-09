@@ -1104,7 +1104,10 @@ def _start_advisor_worker() -> Event:
     proposal-preparation work happens here, never in a request thread."""
 
     stop_event = Event()
-    handlers = {_advisor_jobs.FIXTURE_PROPOSAL: _advisor_services.handle_fixture_proposal_job}
+    handlers = {
+        _advisor_jobs.FIXTURE_PROPOSAL: _advisor_services.handle_fixture_proposal_job,
+        _advisor_jobs.ADVISOR_TURN: _advisor_services.handle_advisor_turn_job,
+    }
 
     def _reap_then_run() -> None:
         while not stop_event.is_set():

@@ -8,10 +8,13 @@ server restart. Claiming a job is a compare-and-swap
 :mod:`lazyportfolio.advisor.repository`'s revision CAS, so two worker
 threads racing on the same job can never both claim it.
 
-MVP scope (§13 Fase 3): one job kind, ``fixture_proposal`` -- no LLM call
-anywhere in this module or its handler. A message's structured content
-(node_id + views, not free text) is the "fixture" a real LLM step would
-someday replace (Fase 4).
+Two job kinds share this one queue: ``fixture_proposal`` (§13 Fase 3 --
+node_id + pre-supplied views, no LLM call anywhere, used by tests and any
+caller that wants a deterministic proposal without spending on an LLM
+call) and ``advisor_turn`` (§13 Fase 4/5 -- node_id + free-text message,
+routed to :func:`advisor.agent.run_advisor_turn`, wired into the live
+worker/UI as of Fase 5). This module itself has no opinion on which --
+it just claims, heartbeats, and completes whatever kind of row is queued.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from uuid import uuid4
 from lazyportfolio.v2 import db as _db
 
 FIXTURE_PROPOSAL = "fixture_proposal"
+ADVISOR_TURN = "advisor_turn"
 
 
 @dataclass(frozen=True)
@@ -255,6 +259,7 @@ def run_worker_loop(
 
 
 __all__ = [
+    "ADVISOR_TURN",
     "FIXTURE_PROPOSAL",
     "JobHandler",
     "JobRecord",

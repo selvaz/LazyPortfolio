@@ -382,3 +382,160 @@ def test_fresh_heartbeat_is_not_reaped(studio) -> None:
     job = jobs.get_job(job_id, db_path=str(store_path))
     assert job is not None
     assert job.status == "running"
+
+
+# --------------------------------------------------------------------- #
+# Fase 5: the real LLM path (advisor_turn), wired end to end into the same
+# worker/HTTP surface the fixture path uses -- docs/node-advisor-operational-plan.md
+# §13 Fase 5. The LLM call itself is mocked (same pattern as
+# tests/test_advisor_agent.py); this file's job is proving the *wiring*
+# (API routing by body shape, job kind, worker handler, assistant message
+# shape), not re-proving run_advisor_turn's own behavior.
+# --------------------------------------------------------------------- #
+def _run_advisor_turn_worker_once(module: Any, *, db_path: Path, backend: _FakeBackend) -> bool:
+    handlers = {
+        module._advisor_jobs.ADVISOR_TURN: functools.partial(
+            module._advisor_services.handle_advisor_turn_job,
+            backend=backend,
+            db_path=str(db_path),
+        )
+    }
+    return module._advisor_jobs.run_worker_once(handlers=handlers, db_path=str(db_path))
+
+
+def _stub_llm(monkeypatch, payload: Any) -> None:
+    from types import SimpleNamespace
+
+    class _FakeAgent:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __call__(self, prompt: str) -> Any:
+            return SimpleNamespace(payload=payload, error=None)
+
+    class _FakeLLMEngine:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    lazybridge = pytest.importorskip("lazybridge")
+    monkeypatch.setattr(lazybridge, "Agent", _FakeAgent)
+    monkeypatch.setattr(lazybridge, "LLMEngine", _FakeLLMEngine)
+
+
+def test_advisor_turn_propose_route_via_http_creates_a_pending_proposal(
+    studio, frame, monkeypatch
+) -> None:
+    pytest.importorskip("lazybridge")
+    pytest.importorskip("lazytools")
+    from advisor.agent import AdvisorTurnResult, CandidateView
+
+    payload = AdvisorTurnResult(
+        route="propose",
+        message="SPY should outperform TLT.",
+        proposed_views=[
+            CandidateView(
+                instruments={"ticker:VTI": 1.0, "ticker:VXUS": -1.0},
+                expected_return=0.03,
+                confidence=0.6,
+                rationale="test",
+            )
+        ],
+    )
+    _stub_llm(monkeypatch, payload)
+
+    module, port, store_path = studio
+    backend = _FakeBackend(frame)
+    tree = create_tree(_config(), actor_type="human", actor_id="test", db_path=str(store_path))
+    _, conv = _post(
+        port, "/api/advisor/conversations", {"tree_id": tree.tree_id, "node_id": "equity"}
+    )
+
+    status, message_response = _post(
+        port,
+        f"/api/advisor/conversations/{conv['conversation_id']}/messages",
+        {"node_id": "equity", "text": "propose a relative view"},
+    )
+    assert status == 202
+
+    ran = _run_advisor_turn_worker_once(module, db_path=store_path, backend=backend)
+    assert ran is True
+
+    status, job_after = _get(port, f"/api/advisor/jobs/{message_response['job_id']}")
+    assert job_after["job"]["status"] == "succeeded", job_after["job"]["error"]
+
+    status, messages = _get(port, f"/api/advisor/conversations/{conv['conversation_id']}/messages")
+    assistant_message = next(m for m in messages["messages"] if m["role"] == "assistant")
+    assert assistant_message["content"]["route"] == "propose"
+    proposal_id = assistant_message["content"]["proposal_id"]
+    assert proposal_id
+
+    status, proposal_response = _get(port, f"/api/advisor/proposals/{proposal_id}")
+    assert proposal_response["status"] == "pending_approval"
+    assert proposal_response["proposal"]["model_provenance"]["producer_kind"] == (
+        "interactive_chat"
+    )
+
+
+def test_advisor_turn_explain_route_via_http_creates_no_proposal(studio, monkeypatch) -> None:
+    pytest.importorskip("lazybridge")
+    pytest.importorskip("lazytools")
+    from advisor.agent import AdvisorTurnResult
+
+    payload = AdvisorTurnResult(
+        route="explain", message="This node is currently min_risk with no views.", proposed_views=[]
+    )
+    _stub_llm(monkeypatch, payload)
+
+    module, port, store_path = studio
+    tree = create_tree(_config(), actor_type="human", actor_id="test", db_path=str(store_path))
+    _, conv = _post(
+        port, "/api/advisor/conversations", {"tree_id": tree.tree_id, "node_id": "equity"}
+    )
+    _post(
+        port,
+        f"/api/advisor/conversations/{conv['conversation_id']}/messages",
+        {"node_id": "equity", "text": "why is this node weighted this way?"},
+    )
+
+    ran = _run_advisor_turn_worker_once(module, db_path=store_path, backend=None)
+    assert ran is True
+
+    status, messages = _get(port, f"/api/advisor/conversations/{conv['conversation_id']}/messages")
+    assistant_message = next(m for m in messages["messages"] if m["role"] == "assistant")
+    assert assistant_message["content"]["route"] == "explain"
+    assert assistant_message["content"]["proposal_id"] is None
+    head = get_head(tree.tree_id, db_path=str(store_path))
+    assert head is not None
+    assert head.revision_id == tree.revision_id  # unchanged -- no proposal, no revision
+
+
+def test_posting_both_views_and_text_is_rejected_with_400(studio) -> None:
+    module, port, store_path = studio
+    del module
+    tree = create_tree(_config(), actor_type="human", actor_id="test", db_path=str(store_path))
+    _, conv = _post(
+        port, "/api/advisor/conversations", {"tree_id": tree.tree_id, "node_id": "equity"}
+    )
+
+    status, response = _post(
+        port,
+        f"/api/advisor/conversations/{conv['conversation_id']}/messages",
+        {"node_id": "equity", "views": [], "text": "hello"},
+    )
+    assert status == 400
+
+
+def test_posting_neither_views_nor_text_is_rejected_with_400(studio) -> None:
+    module, port, store_path = studio
+    del module
+    tree = create_tree(_config(), actor_type="human", actor_id="test", db_path=str(store_path))
+    _, conv = _post(
+        port, "/api/advisor/conversations", {"tree_id": tree.tree_id, "node_id": "equity"}
+    )
+
+    status, response = _post(
+        port,
+        f"/api/advisor/conversations/{conv['conversation_id']}/messages",
+        {"node_id": "equity"},
+    )
+    assert status == 400

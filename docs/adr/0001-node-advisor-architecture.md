@@ -116,3 +116,11 @@ chiamata, non un passo separato.
   complesso (es. un ciclo di chiarimento multi-turno), la Decisione 5 va
   rivista con un `Plan` reale — non è preclusa, solo non necessaria per
   l'MVP di Fase 4.
+- (Fase 5) `run_advisor_turn` è stato scritto e testato in Fase 4 ma cablato
+  nel worker/API/UI live solo in Fase 5, dopo essere stato individuato come
+  gap durante il Deep Audit — la Decisione 3 punto 4 (identità del chiamante
+  come parametro esplicito, mai da un contesto HTTP implicito) ha reso quel
+  cablaggio un routing aggiuntivo in `project/advisor/api.py`/`services.py`
+  (nuovo job kind `advisor_turn` accanto a `fixture_proposal`), non una
+  riscrittura del service layer — la scelta architetturale ha retto al primo
+  vero utilizzo end-to-end.

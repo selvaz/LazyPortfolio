@@ -197,13 +197,13 @@
     </div>
     <div class="advisor-body">
       <div class="advisor-view active" data-advisor-view="chat">
-        <p style="font-size:12px;color:var(--muted);margin-top:0">Nessun LLM in questa fase (Fase 3): invia direttamente un set di view per il nodo selezionato -- il worker le valida, calcola l'impatto e crea una proposta.</p>
+        <p style="font-size:12px;color:var(--muted);margin-top:0">Chiedi al Node Advisor del nodo selezionato: risponde a domande sul suo stato attuale o propone view Black-Litterman per la tua approvazione -- non modifica mai il tree da solo.</p>
         <label style="font-size:11px;font-weight:650">tree_id</label>
         <input type="text" id="advisorTreeId" placeholder="UUID del tree">
         <label style="font-size:11px;font-weight:650">node_id</label>
         <input type="text" id="advisorNodeId" placeholder="es. equity">
-        <label style="font-size:11px;font-weight:650">views (JSON)</label>
-        <textarea id="advisorViewsInput" placeholder='[{&quot;instruments&quot;: {&quot;ticker:VTI&quot;: 1.0, &quot;ticker:VXUS&quot;: -1.0}, &quot;expected_return&quot;: 0.02, &quot;confidence&quot;: 0.6, &quot;rationale&quot;: &quot;...&quot;}]'></textarea>
+        <label style="font-size:11px;font-weight:650">messaggio</label>
+        <textarea id="advisorChatInput" placeholder="es. perché questo nodo è pesato così? oppure: proponi una view su SPY vs TLT"></textarea>
         <div style="margin-top:8px"><button class="button primary" id="advisorSendBtn">Invia</button></div>
         <div id="advisorChatLog" style="margin-top:10px"></div>
       </div>
@@ -572,12 +572,15 @@
           const data = await getJson('/api/advisor/jobs/' + jobId);
           if (data.job.status === 'succeeded') {
             clearInterval(pollTimer);
-            logLine('advisorChatLog', 'Proposta pronta.');
             const messages = await getJson('/api/advisor/conversations/' + activeConversationId + '/messages');
             const last = messages.messages[messages.messages.length - 1];
+            if (last && last.content.message) { logLine('advisorChatLog', last.content.message); }
             if (last && last.content.proposal_id) {
+              logLine('advisorChatLog', 'Proposta pronta.');
               const proposalData = await getJson('/api/advisor/proposals/' + last.content.proposal_id);
               renderProposalCard(proposalData.proposal, proposalData.status);
+            } else if (!last || !last.content.message) {
+              logLine('advisorChatLog', 'Proposta pronta.');
             }
           } else if (data.job.status === 'failed') {
             clearInterval(pollTimer);
@@ -602,15 +605,13 @@
     $c('advisorSendBtn').onclick = async () => {
       const treeId = $c('advisorTreeId').value.trim();
       const nodeId = $c('advisorNodeId').value.trim();
-      let views;
-      try {
-        views = JSON.parse($c('advisorViewsInput').value || '[]');
-      } catch (error) {
-        logLine('advisorChatLog', 'JSON delle view non valido: ' + error.message);
-        return;
-      }
+      const text = $c('advisorChatInput').value.trim();
       if (!treeId || !nodeId) {
         logLine('advisorChatLog', 'tree_id e node_id sono obbligatori.');
+        return;
+      }
+      if (!text) {
+        logLine('advisorChatLog', 'Scrivi un messaggio.');
         return;
       }
       try {
@@ -620,10 +621,11 @@
           activeConversationId = conversation.conversation_id;
           activeConversationKey = key;
         }
-        logLine('advisorChatLog', 'Inviato: ' + views.length + ' view su ' + nodeId);
+        logLine('advisorChatLog', 'Tu: ' + text);
+        $c('advisorChatInput').value = '';
         const response = await postJson('/api/advisor/conversations/' + activeConversationId + '/messages', {
           node_id: nodeId,
-          views,
+          text,
         });
         logLine('advisorChatLog', 'Job in coda: ' + response.job_id.slice(0, 8));
         pollJob(response.job_id);

@@ -120,13 +120,26 @@ def handle_post(
     if match:
         node_id = _require_str(body, "node_id")
         views = body.get("views")
-        if not isinstance(views, list):
-            raise ApiError(400, "'views' must be a list")
+        text = body.get("text")
+        if views is not None and text is not None:
+            raise ApiError(400, "provide exactly one of 'views' or 'text', not both")
+        if isinstance(views, list):
+            # Deterministic path, no LLM call: pre-supplied views (§13 Fase 3).
+            content: dict[str, Any] = {"node_id": node_id, "views": views}
+            job_kind = jobs.FIXTURE_PROPOSAL
+        elif isinstance(text, str) and text:
+            # Real Node Advisor conversation (§13 Fase 4/5): free-text message
+            # routed to advisor.agent.run_advisor_turn on the worker thread.
+            content = {"node_id": node_id, "text": text}
+            job_kind = jobs.ADVISOR_TURN
+        else:
+            raise ApiError(400, "provide either 'views' (a list) or 'text' (a non-empty string)")
         caller_id = str(body.get("caller_id") or "local-user")
         message, job_id = services.post_message_and_enqueue(
             match["conversation_id"],
-            {"node_id": node_id, "views": views},
+            content,
             caller_id=caller_id,
+            job_kind=job_kind,
             db_path=db_path,
         )
         return 202, {"ok": True, "message_id": message.message_id, "job_id": job_id}
