@@ -20,7 +20,6 @@ daily-allocation endpoint or job abstraction; reuse this one.
 from __future__ import annotations
 
 import gzip
-import hashlib
 import json
 import mimetypes
 import re
@@ -36,8 +35,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 from tree_studio_v2.exports import build_audit_bundle, build_client_report
 
 from lazyportfolio.artifact_registry import register_report_artifact
-from lazyportfolio.backend import MarketDataHubOptimizationBackend, OptimizationDataset
+from lazyportfolio.backend import OptimizationDataset
 from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns
+from lazyportfolio.copilot import snapshot as _snapshot
 from lazyportfolio.hierarchical_v2 import (
     HierarchicalV2Backtester,
     HierarchicalV2Estimator,
@@ -72,16 +72,10 @@ def _saved_models() -> list[dict[str, str]]:
 
 
 def _config_instruments(model: V2Model) -> list[str]:
-    """The de-duplicated instrument set a built V2Model actually references."""
-    return list(
-        dict.fromkeys(
-            [
-                *model.root.terminal_instruments(),
-                *(node.proxy for node in model.root.walk() if node.proxy),
-                *model.benchmark.weights,
-            ]
-        )
-    )
+    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.config_instruments``
+    (docs/node-copilot-operational-plan.md §6.2) so LazyTools computes the
+    identical instrument set from the same code, not a second copy of it."""
+    return _snapshot.config_instruments(model)
 
 
 def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
@@ -91,59 +85,18 @@ def _v2_inputs(config: dict[str, Any]) -> tuple[V2Model, OptimizationDataset]:
 
 
 def _config_hash(config: dict[str, Any]) -> str:
-    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), default=_as_json)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.config_hash``
+    (docs/node-copilot-operational-plan.md §6.2)."""
+    return _snapshot.config_hash(config)
 
 
 def _data_fingerprint(config: dict[str, Any]) -> tuple[str | None, str]:
-    """Cheap freshness signal for the instruments a tree config references.
-
-    Reads Market Data Hub's ``coverage_report`` (symbol, last_date,
-    obs_count, last_run_id) -- no price history is loaded -- so this stays
-    cheap enough to run on every cache lookup, before deciding whether to
-    reuse a cached result. A MarketDataHub refresh that touches any
-    referenced instrument changes the fingerprint (and therefore the cache
-    key derived from it), so a result computed before the refresh is never
-    served as if it were still current.
-
-    Degrades to a constant fallback (never raises) when market-data-hub
-    isn't installed or its DB isn't reachable, matching this module's
-    existing best-effort MDH-metadata pattern (see ``instrument_labels``).
-    """
-    try:
-        model = V2Model.from_config(config)
-    except (KeyError, TypeError, ValueError):
-        return None, "invalid-config"
-    symbols = sorted(
-        {
-            instrument.split(":", 1)[-1].strip().upper()
-            for instrument in _config_instruments(model)
-            if instrument
-        }
-    )
-    if not symbols:
-        return None, "no-instruments"
-    try:
-        from market_data_hub.db.connection import get_conn
-
-        con = get_conn(read_only=True)
-        try:
-            placeholders = ", ".join("?" for _ in symbols)
-            rows = con.execute(
-                "SELECT symbol, last_date, obs_count, last_run_id FROM coverage_report "
-                f"WHERE upper(symbol) IN ({placeholders}) ORDER BY symbol",
-                symbols,
-            ).fetchall()
-        finally:
-            con.close()
-    except Exception:
-        return None, "coverage-unavailable"
-    if not rows:
-        return None, "no-coverage"
-    as_of = max((str(row[1]) for row in rows if row[1] is not None), default=None)
-    canonical = json.dumps([[str(value) for value in row] for row in rows], separators=(",", ":"))
-    fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return as_of, fingerprint
+    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.data_fingerprint``
+    (docs/node-copilot-operational-plan.md §6.2) so Tree Studio and LazyTools
+    compute the identical freshness signal from the same code, not a second
+    copy of it. See that function's docstring for the coverage_report/
+    degradation rationale, unchanged by the move."""
+    return _snapshot.data_fingerprint(config)
 
 
 def _cache_key(path: str, config_hash: str, data_fingerprint: str) -> str:
@@ -191,24 +144,18 @@ def _run_summary_fields(path: str, payload: dict[str, Any]) -> tuple[Any, Any]:
 def _load_instruments(
     instruments: list[str], data: dict[str, Any], currency: str
 ) -> OptimizationDataset:
-    """Load a complete daily return matrix, converted to ``currency``, and
-    identify missing series clearly."""
-    dataset = MarketDataHubOptimizationBackend().load_returns(
-        instruments,
-        start=str(data.get("start") or ""),
-        end=str(data.get("end") or ""),
-        currency=currency,
-    )
-    missing = [instrument for instrument in instruments if instrument not in dataset.returns.columns]
-    if missing:
-        display = [instrument.removeprefix("ticker:") for instrument in missing]
-        raise StudioConfigError(
-            "Market Data Hub has no return series for: " + ", ".join(display)
-        )
-    clean = dataset.returns.dropna(how="any")
-    if len(clean) < 3:
-        raise StudioConfigError("Market Data Hub returned fewer than three complete observations")
-    return OptimizationDataset(returns=clean, metadata={**dataset.metadata, "complete_rows": len(clean)})
+    """Thin wrapper: moved to ``lazyportfolio.copilot.snapshot.load_dataset``
+    (docs/node-copilot-operational-plan.md §6.2), so the counterfactual
+    evaluator's baseline/variant solves load through the identical function
+    Tree Studio's own estimate/backtest endpoints use. Translates
+    ``SnapshotLoadError`` to this module's own ``StudioConfigError`` --
+    ``lazyportfolio.copilot`` has no dependency on ``project/``
+    (docs/adr/0001-node-copilot-architecture.md Decision 1), so it cannot
+    raise Tree Studio's exception type itself."""
+    try:
+        return _snapshot.load_dataset(instruments, data, currency)
+    except _snapshot.SnapshotLoadError as exc:
+        raise StudioConfigError(str(exc)) from exc
 
 
 def _scientific_study_settings(config: dict[str, Any]) -> dict[str, Any] | None:

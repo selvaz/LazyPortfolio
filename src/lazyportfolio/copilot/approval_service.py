@@ -11,7 +11,6 @@ stale snapshot both expire the proposal rather than silently reusing it.
 
 from __future__ import annotations
 
-import copy
 import hmac
 import json
 import os
@@ -20,11 +19,11 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID, uuid4
 
 from lazyportfolio.copilot.canonical import content_hash
-from lazyportfolio.copilot.contracts import ChangeProposal, ProposedView, SnapshotDescriptor
+from lazyportfolio.copilot.contracts import ChangeProposal, SnapshotDescriptor
+from lazyportfolio.copilot.node_universe import apply_views_to_config
 from lazyportfolio.copilot.patch import validate_patch
 from lazyportfolio.v2 import db as _db
 from lazyportfolio.v2.model import V2Model
@@ -154,7 +153,7 @@ def apply_proposal(
         ).fetchone()
         assert head_config_row is not None  # tree_heads' FK guarantees this row exists
         base_config = json.loads(head_config_row[0])
-        new_config = _apply_views_patch(base_config, proposal.node_id, proposal.proposed_views)
+        new_config = apply_views_to_config(base_config, proposal.node_id, proposal.proposed_views)
         V2Model.from_config(new_config)  # raises ValueError on an invalid resulting tree
 
         # Step 8 -- insert the new tree_revision.
@@ -254,26 +253,6 @@ def _expire(conn: sqlite3.Connection, proposal_id: UUID) -> None:
         (str(proposal_id),),
     )
     conn.commit()
-
-
-def _apply_views_patch(
-    config: dict[str, Any], node_id: str, proposed_views: list[ProposedView]
-) -> dict[str, Any]:
-    new_config = copy.deepcopy(config)
-    for node in new_config.get("nodes", []):
-        if str(node.get("id")) == node_id:
-            constraints = node.setdefault("constraints", {})
-            constraints["views"] = [
-                {
-                    "instruments": dict(view.instruments),
-                    "expected_return": view.expected_return,
-                    "confidence": view.confidence,
-                    "source": view.source,
-                }
-                for view in proposed_views
-            ]
-            return new_config
-    raise ApprovalError(f"node {node_id!r} not found in tree config")
 
 
 __all__ = [
