@@ -23,8 +23,9 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from lazyportfolio.backend import OptimizationDataset
+from lazyportfolio.advisor.conversation_repository import create_conversation
 from lazyportfolio.advisor.repository import create_tree, get_head
+from lazyportfolio.backend import OptimizationDataset
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_DIR = REPO_ROOT / "project"
@@ -326,9 +327,15 @@ def test_worker_crash_is_recovered_by_the_heartbeat_reaper(studio) -> None:
     module, port, store_path = studio
     del port
     jobs = module._advisor_jobs
+    conversation = create_conversation(
+        "fake-tree", "fake-node", user_id="test", db_path=str(store_path)
+    )
 
     job_id = jobs.enqueue_job(
-        "fake-conversation", "fake-message", jobs.FIXTURE_PROPOSAL, db_path=str(store_path)
+        conversation.conversation_id,
+        "fake-message",
+        jobs.FIXTURE_PROPOSAL,
+        db_path=str(store_path),
     )
     claimed = jobs.claim_next_job(db_path=str(store_path))
     assert claimed is not None
@@ -358,8 +365,14 @@ def test_fresh_heartbeat_is_not_reaped(studio) -> None:
     module, port, store_path = studio
     del port
     jobs = module._advisor_jobs
+    conversation = create_conversation(
+        "fake-tree", "fake-node", user_id="test", db_path=str(store_path)
+    )
     job_id = jobs.enqueue_job(
-        "fake-conversation", "fake-message", jobs.FIXTURE_PROPOSAL, db_path=str(store_path)
+        conversation.conversation_id,
+        "fake-message",
+        jobs.FIXTURE_PROPOSAL,
+        db_path=str(store_path),
     )
     jobs.claim_next_job(db_path=str(store_path))
 
