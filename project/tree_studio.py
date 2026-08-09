@@ -24,16 +24,20 @@ import json
 import mimetypes
 import re
 import sys
+import time
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock, Thread
 from typing import Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
 from tree_studio_v2.exports import build_audit_bundle, build_client_report
 
+from advisor import api as _advisor_api
+from advisor import jobs as _advisor_jobs
+from advisor import services as _advisor_services
 from lazyportfolio.advisor import snapshot as _snapshot
 from lazyportfolio.artifact_registry import register_report_artifact
 from lazyportfolio.backend import OptimizationDataset
@@ -767,6 +771,12 @@ class StudioHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
+        if path.startswith("/api/advisor/jobs/") and path.endswith("/events"):
+            self._advisor_job_events(path.removeprefix("/api/advisor/jobs/").removesuffix("/events"))
+            return
+        if path.startswith("/api/advisor/") or path.endswith("/advisor/context"):
+            self._advisor_get(path)
+            return
         if path == "/api/sample":
             self._json(HTTPStatus.OK, sample_config())
             return
@@ -819,6 +829,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
                 raise StudioConfigError("configuration must be an object")
+            if path.startswith("/api/advisor/"):
+                self._advisor_post(path, payload)
+                return
             if path == "/api/models":
                 name = payload.get("name")
                 config = payload.get("config")
@@ -1019,13 +1032,94 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.wfile.write(view[offset : offset + 64 * 1024])
         self.wfile.flush()
 
+    # ------------------------------------------------------------------ #
+    # Node Advisor (docs/node-advisor-operational-plan.md §9.1/§13 Fase 3)
+    # ------------------------------------------------------------------ #
+    def _advisor_get(self, path: str) -> None:
+        try:
+            status, response_payload = _advisor_api.handle_get(path)
+        except _advisor_api.ApiError as exc:
+            self._json(HTTPStatus(exc.status), {"ok": False, "error": exc.message})
+            return
+        self._json(HTTPStatus(status), response_payload)
+
+    def _advisor_post(self, path: str, body: dict[str, Any]) -> None:
+        try:
+            status, response_payload = _advisor_api.handle_post(path, body)
+        except _advisor_api.ApiError as exc:
+            self._json(HTTPStatus(exc.status), {"ok": False, "error": exc.message})
+            return
+        self._json(HTTPStatus(status), response_payload)
+
+    def _advisor_job_events(self, job_id: str) -> None:
+        """SSE stream of a job's status until it reaches a terminal state.
+
+        Polling-based (not push): the job table is the source of truth and
+        a worker thread updates it independently, so a short poll interval
+        here is simplicity over an in-process pub/sub this single-user tool
+        does not need. Gives up after a bounded time so a client that never
+        disconnects cannot hold a server thread open forever.
+        """
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        last_status: str | None = None
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            job = _advisor_jobs.get_job(job_id)
+            if job is None:
+                self._sse_write({"ok": False, "error": "job not found"})
+                return
+            if job.status != last_status:
+                last_status = job.status
+                if not self._sse_write(
+                    {"ok": True, "job_id": job.job_id, "status": job.status, "error": job.error}
+                ):
+                    return
+            if job.status in ("succeeded", "failed"):
+                return
+            time.sleep(0.3)
+
+    def _sse_write(self, payload: dict[str, Any]) -> bool:
+        """Write one SSE event; returns False (instead of raising) if the
+        client has disconnected, so the polling loop can stop cleanly."""
+
+        body = f"data: {json.dumps(payload, default=_as_json)}\n\n".encode()
+        try:
+            self.wfile.write(body)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return False
+        return True
+
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[tree-studio] {format % args}")
+
+
+def _start_advisor_worker() -> Event:
+    """Background worker thread for the Node Advisor job queue (§9.2): all
+    proposal-preparation work happens here, never in a request thread."""
+
+    stop_event = Event()
+    handlers = {_advisor_jobs.FIXTURE_PROPOSAL: _advisor_services.handle_fixture_proposal_job}
+
+    def _reap_then_run() -> None:
+        while not stop_event.is_set():
+            _advisor_jobs.reap_orphaned_jobs(heartbeat_timeout_seconds=60)
+            _advisor_jobs.run_worker_once(handlers=handlers)
+            stop_event.wait(0.2)
+
+    Thread(target=_reap_then_run, daemon=True, name="advisor-worker").start()
+    return stop_event
 
 
 def main() -> None:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
     httpd = ThreadingHTTPServer(("127.0.0.1", port), StudioHandler)
+    _start_advisor_worker()
     print(f"LazyPortfolio Tree Studio running at http://127.0.0.1:{port}")
     try:
         httpd.serve_forever()

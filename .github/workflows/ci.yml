@@ -54,7 +54,7 @@ jobs:
       - name: Quality checks
         run: |
           set +e
-          ruff check src tests project/tree_studio.py > ruff.log 2>&1
+          ruff check src tests project/tree_studio.py project/advisor > ruff.log 2>&1
           ruff_status=$?
           mypy src/lazyportfolio > mypy.log 2>&1
           mypy_status=$?
