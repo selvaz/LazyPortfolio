@@ -136,15 +136,25 @@ def create_proposal(
     producer_kind: ProducerKind = "interactive_chat",
     producer_id: str = "fixture",
     model: str = "none (Fase 3, no LLM)",
+    batch_id: UUID | None = None,
     backend: OptimizationDataBackend | None = None,
     db_path: str | os.PathLike[str] | None = None,
 ) -> ChangeProposal:
     """Validate, counterfactually evaluate, and persist a
     ``pending_approval`` proposal for ``views`` on ``node_id`` -- pipeline
     steps 5-9 of §8.2's Plan, shared by Fase 3's fixture job handler
-    (default ``producer_id="fixture"``) and Fase 4's LLM-driven
-    :func:`advisor.agent.run_advisor_turn` (which passes the real model
-    name and ``producer_id="node-advisor-agent"``).
+    (default ``producer_id="fixture"``), Fase 4's LLM-driven
+    :func:`advisor.agent.run_advisor_turn` (real model name,
+    ``producer_id="node-advisor-agent"``), and Fase 6's
+    :func:`advisor.committee.run_committee_batch` (``producer_kind=
+    "scheduled_batch"``, a shared ``batch_id`` across one run's proposals)
+    -- the exact producer-agnostic reuse docs/adr/0001-node-advisor-architecture.md
+    Decision 3 was written to make possible: this function has no branch on
+    which producer called it.
+
+    ``batch_id`` is ``None`` for the Node Advisor's own conversational flow
+    (the default) and set by a batch producer to group one run's proposals
+    (§3.4 point 2).
     """
 
     head = tree_repository.get_head(tree_id, db_path=db_path)
@@ -174,6 +184,7 @@ def create_proposal(
         id=uuid4(),
         schema_version="1.0",
         kind="replace_node_views",
+        batch_id=batch_id,
         tree_id=UUID(head.tree_id),
         base_revision_id=UUID(head.revision_id),
         node_id=node_id,

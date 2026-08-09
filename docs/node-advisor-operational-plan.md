@@ -813,6 +813,7 @@ Exit criteria:
 
 ### Fase 6 — Estensioni successive (non MVP)
 
+- **Investment Committee come secondo producer** di `ChangeProposal` -- l'obiettivo strategico dichiarato all'avvio di questo progetto (§1: "primo incremento concreto del più ampio Investment Committee");
 - patch di vincoli non strutturali con schema separato;
 - proposte di topologia/proxy/benchmark ad alto impatto;
 - confronto e ranking di proposte;
@@ -821,6 +822,8 @@ Exit criteria:
 - pipeline point-in-time per backtest causale delle view;
 - deployment multiutente con autenticazione e RBAC;
 - notifiche esterne con approval separata.
+
+**Nota di implementazione (Investment Committee):** `project/advisor/committee.py`'s `run_committee_batch` implementa solo la **prova strutturale** -- un secondo producer non interattivo (`producer_kind="scheduled_batch"`, `producer_id="investment-committee"`) che crea proposte `pending_approval` su più nodi in un'unica run condividendo un `batch_id`, attraverso la stessa `services.create_proposal` (stessa validazione, stesso hash, stessa state machine) usata dal Node Advisor conversazionale e dal percorso fixture -- zero modifiche a schema o state machine, la prova che la scelta producer-agnostic di Fase 0/§3.4 ha retto. `node_views` (quali nodi toccare, quali view proporre) è fornito dal chiamante -- **non c'è ancora un vero ragionamento del committee** (sintesi multi-specialist macro/market, decisione autonoma su quali nodi toccare): quello resta un lavoro sostanziale a sé, non ancora pianificato in dettaglio, così come il trigger schedulato (LazyPulse) reale -- entrambi rimandati a quando servirà davvero un committee che ragiona, non solo un producer che scrive.
 
 ## 14. Ordine dei pull request
 
