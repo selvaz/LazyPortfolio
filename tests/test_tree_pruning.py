@@ -3,7 +3,11 @@ from lazyportfolio.v2.tree_pruning import PruningRule, prune_config
 
 def _metrics(sharpe_delta: float, drawdown_delta: float = 0.0, node_vol: float = 0.10):
     father = {"annualized_sharpe": 0.50, "max_drawdown": -0.20, "annualized_volatility": 0.10}
-    node = {"annualized_sharpe": 0.50 + sharpe_delta, "max_drawdown": -0.20 + drawdown_delta, "annualized_volatility": node_vol}
+    node = {
+        "annualized_sharpe": 0.50 + sharpe_delta,
+        "max_drawdown": -0.20 + drawdown_delta,
+        "annualized_volatility": node_vol,
+    }
     return {"NODE:Child": node, "FATHER:Child": father}
 
 
@@ -19,7 +23,9 @@ def test_pruning_promotes_proxy_once_and_preserves_source():
         source, {"rolling": _metrics(-0.10), "expanding": _metrics(-0.10)}
     )
     assert source["nodes"][0]["children"] == ["child"]
-    assert candidate["nodes"] == [{"id": "root", "name": "Root", "children": [], "instruments": ["ABC"]}]
+    assert candidate["nodes"] == [
+        {"id": "root", "name": "Root", "children": [], "instruments": ["ABC"]}
+    ]
     assert decisions[0]["decision"] == "prune"
     assert decisions[0]["action"]["promoted_proxy"] == "ABC"
 
@@ -46,17 +52,35 @@ def test_pruning_parent_lifts_retained_descendant_without_orphaning_it():
         "root_id": "root",
         "nodes": [
             {"id": "root", "name": "Root", "children": ["parent"], "instruments": []},
-            {"id": "parent", "name": "Parent", "children": ["child"], "instruments": [], "proxy": "PP"},
+            {
+                "id": "parent",
+                "name": "Parent",
+                "children": ["child"],
+                "instruments": [],
+                "proxy": "PP",
+            },
             {"id": "child", "name": "Child", "children": [], "instruments": ["X"], "proxy": "CP"},
         ],
+    }
+    parent_arm = {"annualized_sharpe": 0.40, "max_drawdown": -0.20, "annualized_volatility": 0.10}
+    father_of_parent = {
+        "annualized_sharpe": 0.50,
+        "max_drawdown": -0.20,
+        "annualized_volatility": 0.10,
+    }
+    child_arm = {"annualized_sharpe": 0.60, "max_drawdown": -0.20, "annualized_volatility": 0.10}
+    father_of_child = {
+        "annualized_sharpe": 0.50,
+        "max_drawdown": -0.20,
+        "annualized_volatility": 0.10,
     }
     metrics = {}
     for protocol in ("rolling", "expanding"):
         metrics[protocol] = {
-            "NODE:Parent": {"annualized_sharpe": 0.40, "max_drawdown": -0.20, "annualized_volatility": 0.10},
-            "FATHER:Parent": {"annualized_sharpe": 0.50, "max_drawdown": -0.20, "annualized_volatility": 0.10},
-            "NODE:Child": {"annualized_sharpe": 0.60, "max_drawdown": -0.20, "annualized_volatility": 0.10},
-            "FATHER:Child": {"annualized_sharpe": 0.50, "max_drawdown": -0.20, "annualized_volatility": 0.10},
+            "NODE:Parent": parent_arm,
+            "FATHER:Parent": father_of_parent,
+            "NODE:Child": child_arm,
+            "FATHER:Child": father_of_child,
         }
     candidate, decisions = prune_config(source, metrics)
     assert [node["id"] for node in candidate["nodes"]] == ["root", "child"]

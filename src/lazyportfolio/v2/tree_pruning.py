@@ -22,6 +22,11 @@ class PruningRule:
     required_protocols: tuple[str, ...] = ("rolling", "expanding")
 
 
+#: Frozen, so a module-level singleton is safe to share as a default argument
+#: (never mutated in place, unlike a mutable default this stands in for).
+_DEFAULT_RULE = PruningRule()
+
+
 def _arm(metrics: dict[str, dict[str, Any]], prefix: str, name: str) -> dict[str, Any] | None:
     return metrics.get(f"{prefix}:{name}")
 
@@ -29,7 +34,7 @@ def _arm(metrics: dict[str, dict[str, Any]], prefix: str, name: str) -> dict[str
 def classify_node(
     node: dict[str, Any],
     protocol_metrics: dict[str, dict[str, dict[str, Any]]],
-    rule: PruningRule = PruningRule(),
+    rule: PruningRule = _DEFAULT_RULE,
 ) -> dict[str, Any]:
     """Return a serialisable retain/prune decision for one non-root node.
 
@@ -50,11 +55,15 @@ def classify_node(
         sharpe_delta = float(child.get("annualized_sharpe", 0.0)) - float(
             father.get("annualized_sharpe", 0.0)
         )
-        drawdown_delta = float(child.get("max_drawdown", 0.0)) - float(father.get("max_drawdown", 0.0))
+        drawdown_delta = float(child.get("max_drawdown", 0.0)) - float(
+            father.get("max_drawdown", 0.0)
+        )
         child_vol = float(child.get("annualized_volatility", 0.0))
         father_vol = float(father.get("annualized_volatility", 0.0))
-        child_drawdown_per_vol = abs(float(child.get("max_drawdown", 0.0))) / child_vol if child_vol > 0 else float("inf")
-        father_drawdown_per_vol = abs(float(father.get("max_drawdown", 0.0))) / father_vol if father_vol > 0 else float("inf")
+        child_mdd = abs(float(child.get("max_drawdown", 0.0)))
+        father_mdd = abs(float(father.get("max_drawdown", 0.0)))
+        child_drawdown_per_vol = child_mdd / child_vol if child_vol > 0 else float("inf")
+        father_drawdown_per_vol = father_mdd / father_vol if father_vol > 0 else float("inf")
         protocol_pass = (
             sharpe_delta >= rule.min_sharpe_improvement
             and child_drawdown_per_vol <= father_drawdown_per_vol * rule.max_drawdown_per_vol_ratio
@@ -105,7 +114,7 @@ def _depths(config: dict[str, Any]) -> dict[str, int]:
 def prune_config(
     config: dict[str, Any],
     protocol_metrics: dict[str, dict[str, dict[str, Any]]],
-    rule: PruningRule = PruningRule(),
+    rule: PruningRule = _DEFAULT_RULE,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Classify and contract all non-root branches, shallow to deep.
 
