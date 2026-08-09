@@ -80,6 +80,28 @@ Questa distinzione è un invariante di prodotto, non solo tecnico: previene
 che un backtest con view formulata con informazioni correnti venga letto
 come prova out-of-sample.
 
+## Decisione 5 — Fase 4: una singola chiamata LLM strutturata, non un `Plan` a 10 step
+
+Il piano finalizzato (§8.2) descrive la preparazione di una proposta come un
+`Plan` LazyBridge a 10 step dichiarativi. L'implementazione (`project/advisor/agent.py`)
+usa invece un solo `Agent` con `output=AdvisorTurnResult` (schema Pydantic
+vincolato: `route: "explain"|"propose"`, `message`, `proposed_views`) seguito
+da controllo di flusso Python semplice (if/else), non un oggetto `Plan`
+multi-step.
+
+Motivazione: i 10 step del piano descrivono l'invariante che conta — l'LLM
+propone tramite uno schema vincolato, ogni passo successivo è validazione,
+calcolo e persistenza deterministici, nessun tool dell'LLM può mai scrivere
+nulla — non un numero di step imposto. Una singola chiamata Agent con output
+strutturato mantiene esattamente lo stesso invariante (dimostrato dai test:
+`route="explain"` non tocca mai `validate_view_set`/counterfactual/
+create_proposal; una view malevola prodotta dall'LLM viene comunque
+rifiutata dal validator deterministico) con una frazione della complessità
+implementativa. `clarify_or_continue` (step 2 del piano) è collassato nel
+campo `route` dello stesso output strutturato; `retrieve_evidence` (step 3)
+è delegato al normale tool-calling dell'Agent all'interno della sua unica
+chiamata, non un passo separato.
+
 ## Conseguenze
 
 - Ogni contratto Pydantic scritto in Fase 0 include `kind: str` aperto e
@@ -90,3 +112,7 @@ come prova out-of-sample.
   HTTP.
 - Qualunque futura richiesta di "backtest della proposta" nella UI deve
   dichiarare quale delle tre modalità sta mostrando.
+- Se una fase successiva ha davvero bisogno di step multipli con routing
+  complesso (es. un ciclo di chiarimento multi-turno), la Decisione 5 va
+  rivista con un `Plan` reale — non è preclusa, solo non necessaria per
+  l'MVP di Fase 4.

@@ -7,10 +7,12 @@ docs/adr/0001-node-advisor-architecture.md Decision 3 point 4, so this same
 layer stays callable from a future scheduled job (Fase 6's Investment
 Committee) as well as an HTTP request.
 
-MVP scope: ``create_fixture_proposal`` is the whole "proposal preparation"
-pipeline with no LLM anywhere -- ``views`` are supplied directly by the
-caller (a fixture, or eventually a human), validated and counterfactually
-evaluated exactly as an LLM-produced candidate would be in Fase 4.
+``create_proposal`` is the whole "proposal preparation" pipeline, shared by
+Fase 3's fixture job handler and Fase 4's LLM-driven
+``advisor.agent.run_advisor_turn``: ``views`` are validated and
+counterfactually evaluated identically regardless of whether they came from
+a fixture or an LLM's structured output -- the pipeline itself never knows
+or cares which.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from lazyportfolio.advisor.contracts import (
     ChangeProposal,
     JsonPatchOperation,
     ModelProvenance,
+    ProducerKind,
     ProposedView,
 )
 from lazyportfolio.advisor.patch import views_patch_path
@@ -117,20 +120,25 @@ def post_message_and_enqueue(
 # --------------------------------------------------------------------- #
 # Proposal preparation (the fixture job handler)
 # --------------------------------------------------------------------- #
-def create_fixture_proposal(
+def create_proposal(
     tree_id: str,
     node_id: str,
     views: list[dict[str, Any]],
     *,
     caller_id: str,
     rationale: str = "Fixture proposal (Fase 3: no LLM in this phase).",
+    producer_kind: ProducerKind = "interactive_chat",
+    producer_id: str = "fixture",
+    model: str = "none (Fase 3, no LLM)",
     backend: OptimizationDataBackend | None = None,
     db_path: str | os.PathLike[str] | None = None,
 ) -> ChangeProposal:
     """Validate, counterfactually evaluate, and persist a
-    ``pending_approval`` proposal for ``views`` on ``node_id`` -- the exact
-    pipeline steps 5-9 of §8.2's Plan, minus the LLM-only steps 2-4
-    (``retrieve_evidence``/``synthesize_candidate_views``) that Fase 4 adds.
+    ``pending_approval`` proposal for ``views`` on ``node_id`` -- pipeline
+    steps 5-9 of §8.2's Plan, shared by Fase 3's fixture job handler
+    (default ``producer_id="fixture"``) and Fase 4's LLM-driven
+    :func:`advisor.agent.run_advisor_turn` (which passes the real model
+    name and ``producer_id="node-advisor-agent"``).
     """
 
     head = tree_repository.get_head(tree_id, db_path=db_path)
@@ -154,7 +162,7 @@ def create_fixture_proposal(
         JsonPatchOperation(op="replace", path=views_patch_path(node_id), value=None),
     ]
     provenance = ModelProvenance(
-        producer_kind="interactive_chat", producer_id="fixture", model="none (Fase 3, no LLM)"
+        producer_kind=producer_kind, producer_id=producer_id, model=model
     )
     draft = ChangeProposal(
         id=uuid4(),
@@ -192,7 +200,7 @@ def handle_fixture_proposal_job(
 ) -> None:
     """The one MVP job handler: reads the triggering message's structured
     content (``{"node_id": ..., "views": [...]}, ...) and runs
-    :func:`create_fixture_proposal`. Registered against
+    :func:`create_proposal`. Registered against
     ``advisor.jobs.FIXTURE_PROPOSAL`` by the worker's caller."""
 
     conversation = conversations.get_conversation(job.conversation_id, db_path=db_path)
@@ -211,7 +219,7 @@ def handle_fixture_proposal_job(
     node_id = str(message.content["node_id"])
     views = list(message.content["views"])
 
-    proposal = create_fixture_proposal(
+    proposal = create_proposal(
         conversation.tree_id,
         node_id,
         views,
@@ -279,7 +287,7 @@ __all__ = [
     "TreeNotFound",
     "approve_proposal",
     "create_conversation",
-    "create_fixture_proposal",
+    "create_proposal",
     "get_node_context",
     "get_proposal",
     "handle_fixture_proposal_job",
