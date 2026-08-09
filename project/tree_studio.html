@@ -163,15 +163,55 @@
     .hidden { display:none !important; }
     @media (max-width:1050px) { .layout { grid-template-columns:250px minmax(370px, 1fr); height:auto; min-height:calc(100vh - 58px); } .pane.results { grid-column:1/-1; border-top:1px solid var(--line); min-height:420px; } }
     @media (max-width:700px) { .topbar { padding:0 10px; } .top-actions .button:not(.run) { display:none; } .layout { display:block; } .pane { height:auto; max-height:none; border-right:0; border-bottom:1px solid var(--line); } .pane.tree-pane { max-height:420px; } .grid { grid-template-columns:1fr; } .editor-nav .button { font-size:11px; } }
+    /* Node Advisor side panel (docs/node-advisor-operational-plan.md §10, §13 Fase 3). Fixed drawer, not a grid column -- it must not disturb the three-pane layout above when closed. */
+    #advisorPane { position:fixed; top:58px; right:0; width:380px; max-width:92vw; height:calc(100vh - 58px); background:var(--panel); border-left:1px solid var(--line); box-shadow:-4px 0 14px rgba(0,0,0,.08); z-index:80; display:flex; flex-direction:column; }
+    #advisorPane .advisor-tabs { display:flex; border-bottom:1px solid var(--line); }
+    #advisorPane .advisor-tab { flex:1; padding:10px 6px; text-align:center; font-weight:650; font-size:12px; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; background:none; border-left:0; border-right:0; border-top:0; }
+    #advisorPane .advisor-tab.active { color:var(--blue-dark); border-bottom-color:var(--blue); }
+    #advisorPane .advisor-body { flex:1; overflow:auto; padding:12px 14px; }
+    #advisorPane .advisor-view { display:none; }
+    #advisorPane .advisor-view.active { display:block; }
+    #advisorPane textarea { width:100%; min-height:70px; font-family:inherit; font-size:12px; border:1px solid var(--line); border-radius:5px; padding:6px 8px; box-sizing:border-box; }
+    #advisorPane input[type=text] { width:100%; border:1px solid var(--line); border-radius:5px; padding:6px 8px; box-sizing:border-box; font-size:12px; margin-bottom:6px; }
+    .advisor-card { border:1px solid var(--line); border-radius:6px; padding:10px; margin-bottom:10px; font-size:12px; }
+    .advisor-card .advisor-card-title { font-weight:700; margin-bottom:4px; }
+    .advisor-status-pill { display:inline-block; padding:2px 7px; border-radius:10px; font-size:11px; font-weight:650; background:#eef2f4; color:var(--muted); }
+    .advisor-status-pill.pending_approval { background:#fdf1da; color:var(--gold); }
+    .advisor-status-pill.applied { background:#e4f3ee; color:var(--green); }
+    .advisor-status-pill.rejected,.advisor-status-pill.expired { background:#f8e6e6; color:var(--red); }
   </style>
 </head>
 <body>
-  <header class="topbar"><div class="brand">LazyFin <small>Tree Studio</small></div><div class="top-actions"><select id="configSource" title="Scegli un esempio o un JSON importato"><option value="multi">Esempio multi-sleeve</option><option value="minimum">Esempio forward minimo</option></select><input id="jsonImport" type="file" accept="application/json,.json" class="hidden"><button class="button" id="loadConfigBtn" data-help="Carica l'esempio selezionato. L'opzione Importa JSON apre un file JSON ed e conservata nella lista locale del browser." title="Carica configurazione">Carica</button><button class="button" id="saveConfigBtn" data-help="Salva il modello nel browser e in reports/tree_studio/models, una cartella locale esclusa da Git." title="Salva modello">Salva modello</button><button class="button" id="exportBtn" data-help="Esporta il modello corrente, inclusi albero, benchmark e protocollo, in un file JSON portabile." title="Esporta JSON">Esporta JSON</button><button class="button" id="clearCacheBtn" data-help="Svuota solo la cache dei risultati sul server locale. Modelli salvati, configurazione e dati Market Data Hub non vengono modificati." title="Svuota cache risultati">Svuota cache</button><button class="button primary" id="verifyBtn" data-help="Controlla struttura, ticker, benchmark e compatibilita con la modalita forward senza eseguire il calcolo." title="Verifica configurazione">Verifica</button><button class="button run" id="runBtn" data-help="Con Forward attivo esegue B0, L0, ogni sleeve e i portafogli composti. Se disattivato calcola i pesi ricorsivi di tutti i nodi e del portafoglio finale." title="Esegui ottimizzazione">Ottimizza</button><button class="button run" id="backtestBtn" data-help="Con Forward attivo mostra il backtest gerarchico: benchmark, root, pesi locali, portafogli composti e traccia dei ribilanciamenti. Se Forward e disattivo esegue il backtest ricorsivo dell'albero." title="Esegui backtest">Backtest</button></div></header>
+  <header class="topbar"><div class="brand">LazyFin <small>Tree Studio</small></div><div class="top-actions"><select id="configSource" title="Scegli un esempio o un JSON importato"><option value="multi">Esempio multi-sleeve</option><option value="minimum">Esempio forward minimo</option></select><input id="jsonImport" type="file" accept="application/json,.json" class="hidden"><button class="button" id="loadConfigBtn" data-help="Carica l'esempio selezionato. L'opzione Importa JSON apre un file JSON ed e conservata nella lista locale del browser." title="Carica configurazione">Carica</button><button class="button" id="saveConfigBtn" data-help="Salva il modello nel browser e in reports/tree_studio/models, una cartella locale esclusa da Git." title="Salva modello">Salva modello</button><button class="button" id="exportBtn" data-help="Esporta il modello corrente, inclusi albero, benchmark e protocollo, in un file JSON portabile." title="Esporta JSON">Esporta JSON</button><button class="button" id="clearCacheBtn" data-help="Svuota solo la cache dei risultati sul server locale. Modelli salvati, configurazione e dati Market Data Hub non vengono modificati." title="Svuota cache risultati">Svuota cache</button><button class="button primary" id="verifyBtn" data-help="Controlla struttura, ticker, benchmark e compatibilita con la modalita forward senza eseguire il calcolo." title="Verifica configurazione">Verifica</button><button class="button run" id="runBtn" data-help="Con Forward attivo esegue B0, L0, ogni sleeve e i portafogli composti. Se disattivato calcola i pesi ricorsivi di tutti i nodi e del portafoglio finale." title="Esegui ottimizzazione">Ottimizza</button><button class="button run" id="backtestBtn" data-help="Con Forward attivo mostra il backtest gerarchico: benchmark, root, pesi locali, portafogli composti e traccia dei ribilanciamenti. Se Forward e disattivo esegue il backtest ricorsivo dell'albero." title="Esegui backtest">Backtest</button><button class="button" id="advisorToggleBtn" data-help="Apre il pannello Node Advisor per il nodo selezionato: chat, fonti, proposte e audit." title="Node Advisor">Advisor</button></div></header>
   <main class="layout">
     <aside class="pane tree-pane"><div class="pane-header"><span class="pane-title">Albero</span><button class="button" id="addNodeBtn" data-help="Aggiunge un nodo figlio al nodo selezionato. Puoi ripetere l'operazione per creare tutti i livelli che vuoi." title="Aggiungi figlio">Aggiungi figlio</button></div><div class="guide"><h2>Ottimizzazione forward</h2><p>Con Forward attivo, ogni sleeve viene confrontata con il proprio proxy e i pesi vengono ricomposti a ogni livello. Disattivalo per vedere esclusivamente l'ottimizzazione ricorsiva corrente dell'albero.</p></div><div class="tree" id="tree"></div></aside>
     <section class="pane"><div class="pane-header"><div><span class="pane-title" id="editorTitle">Nodo</span><div class="editor-nav"><button class="button active" data-view="build" data-help="Modifica struttura, universo, obiettivo e vincoli del nodo selezionato.">Albero e nodo</button><button class="button" data-view="map" data-help="Mostra tutto l'albero con tutti i livelli. Clicca un nodo per modificarlo.">Vista albero</button><button class="button" data-view="test" data-help="Imposta storia dei dati, costi, frequenza di ribilanciamento e benchmark del backtest.">Dati e backtest</button></div></div><button class="button danger" id="deleteNodeBtn" data-help="Elimina il nodo selezionato. Un nodo con figli deve essere prima svuotato o riorganizzato.">Elimina nodo</button></div><div id="editorNote" class="editor-note"></div><div class="form" id="nodeForm"></div><div class="tree-map hidden" id="treeMap"></div><div class="settings hidden" id="globalForm"></div></section>
     <aside class="pane results" id="resultsPane"><div class="pane-header"><span class="pane-title">Risultati</span><div><span id="busy"></span><button class="button" id="auditExportBtn" data-help="Scarica uno ZIP tecnico con configurazione, dati raw, tutte le serie di stima e sintetiche, universi, pesi, audit, curve e costi di ogni fold." title="Esporta audit completo">Audit ZIP</button><button class="button" id="clientReportBtn" data-help="Scarica un report HTML standalone con albero, impostazioni, risultati walk-forward, grafici e pesi finali." title="Esporta report presentabile">Report HTML</button><button class="button" id="expandResultsBtn" data-help="Espande il pannello Risultati a tutta pagina; premilo di nuovo per tornare alla vista a tre colonne." title="Espandi risultati">Espandi</button></div></div><div id="status" class="status">Carica una configurazione, verifica, quindi ottimizza o esegui il backtest.</div><div class="result" id="result"></div></aside>
   </main>
+  <aside id="advisorPane" class="hidden">
+    <div class="advisor-tabs">
+      <button class="advisor-tab active" data-advisor-tab="chat">Chat</button>
+      <button class="advisor-tab" data-advisor-tab="fonti">Fonti</button>
+      <button class="advisor-tab" data-advisor-tab="proposte">Proposte</button>
+      <button class="advisor-tab" data-advisor-tab="audit">Audit</button>
+    </div>
+    <div class="advisor-body">
+      <div class="advisor-view active" data-advisor-view="chat">
+        <p style="font-size:12px;color:var(--muted);margin-top:0">Nessun LLM in questa fase (Fase 3): invia direttamente un set di view per il nodo selezionato -- il worker le valida, calcola l'impatto e crea una proposta.</p>
+        <label style="font-size:11px;font-weight:650">tree_id</label>
+        <input type="text" id="advisorTreeId" placeholder="UUID del tree">
+        <label style="font-size:11px;font-weight:650">node_id</label>
+        <input type="text" id="advisorNodeId" placeholder="es. equity">
+        <label style="font-size:11px;font-weight:650">views (JSON)</label>
+        <textarea id="advisorViewsInput" placeholder='[{&quot;instruments&quot;: {&quot;ticker:VTI&quot;: 1.0, &quot;ticker:VXUS&quot;: -1.0}, &quot;expected_return&quot;: 0.02, &quot;confidence&quot;: 0.6, &quot;rationale&quot;: &quot;...&quot;}]'></textarea>
+        <div style="margin-top:8px"><button class="button primary" id="advisorSendBtn">Invia</button></div>
+        <div id="advisorChatLog" style="margin-top:10px"></div>
+      </div>
+      <div class="advisor-view" data-advisor-view="fonti"><p style="font-size:12px;color:var(--muted)">Nessuna fonte: la ricerca (evidence) arriva con l'agente conversazionale (Fase 4).</p></div>
+      <div class="advisor-view" data-advisor-view="proposte"><div id="advisorProposalsLog" style="font-size:12px;color:var(--muted)">Nessuna proposta ancora in questa sessione.</div></div>
+      <div class="advisor-view" data-advisor-view="audit"><div id="advisorAuditLog" style="font-size:12px;color:var(--muted)">Nessun evento ancora.</div></div>
+    </div>
+  </aside>
   <script>
   const $ = (id) => document.getElementById(id);
   let state = null, selectedId = null, activeView = 'build';
@@ -428,6 +468,165 @@
   refreshConfigSource();
   syncBrowserModels().then(refreshDiskModels);
   fetch('/api/sample').then(r=>r.json()).then(data=>{state=data;selectedId=data.root_id;render();hydrateInstrumentLabels();});
+
+  // Node Advisor side panel -- isolated from the tree editor's script above
+  // (docs/node-advisor-operational-plan.md §10, §13 Fase 3). No LLM: the
+  // "Invia" button posts a caller-supplied view set directly, exactly the
+  // fixture path Fase 3's worker executes deterministically.
+  (function () {
+    const $c = (id) => document.getElementById(id);
+    let activeConversationId = null;
+    let pollTimer = null;
+
+    function logLine(containerId, text) {
+      const el = $c(containerId);
+      const line = document.createElement('div');
+      line.style.marginBottom = '6px';
+      line.textContent = text;
+      el.prepend(line);
+    }
+
+    function statusPill(status) {
+      const span = document.createElement('span');
+      span.className = 'advisor-status-pill ' + status;
+      span.textContent = status;
+      return span;
+    }
+
+    async function postJson(path, body) {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || ('HTTP ' + response.status));
+      }
+      return data;
+    }
+
+    async function getJson(path) {
+      const response = await fetch(path);
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || ('HTTP ' + response.status));
+      }
+      return data;
+    }
+
+    function renderProposalCard(proposal, status) {
+      const container = $c('advisorProposalsLog');
+      if (container.dataset.empty) { container.textContent = ''; delete container.dataset.empty; }
+      const card = document.createElement('div');
+      card.className = 'advisor-card';
+      const title = document.createElement('div');
+      title.className = 'advisor-card-title';
+      title.textContent = proposal.node_id + ' -- ' + proposal.id.slice(0, 8);
+      card.appendChild(title);
+      card.appendChild(statusPill(status));
+      const delta = document.createElement('pre');
+      delta.style.cssText = 'white-space:pre-wrap;font-size:11px;margin:8px 0;max-height:160px;overflow:auto';
+      delta.textContent = JSON.stringify(proposal.counterfactual.delta, null, 2);
+      card.appendChild(delta);
+      if (status === 'pending_approval') {
+        const approveBtn = document.createElement('button');
+        approveBtn.className = 'button primary';
+        approveBtn.textContent = 'Approva e applica';
+        approveBtn.onclick = async () => {
+          try {
+            const result = await postJson('/api/advisor/proposals/' + proposal.id + '/approve', {
+              proposal_hash: proposal.content_hash,
+              idempotency_key: 'ui-' + Date.now(),
+              approved_by: 'local-user',
+            });
+            logLine('advisorAuditLog', 'Approvata: nuova revisione ' + result.new_revision_id.slice(0, 8));
+            card.remove();
+          } catch (error) { logLine('advisorAuditLog', 'Errore approvazione: ' + error.message); }
+        };
+        const rejectBtn = document.createElement('button');
+        rejectBtn.className = 'button danger';
+        rejectBtn.textContent = 'Rifiuta';
+        rejectBtn.style.marginLeft = '6px';
+        rejectBtn.onclick = async () => {
+          try {
+            await postJson('/api/advisor/proposals/' + proposal.id + '/reject', { rejected_by: 'local-user' });
+            logLine('advisorAuditLog', 'Proposta rifiutata: ' + proposal.id.slice(0, 8));
+            card.remove();
+          } catch (error) { logLine('advisorAuditLog', 'Errore rifiuto: ' + error.message); }
+        };
+        const actions = document.createElement('div');
+        actions.style.marginTop = '8px';
+        actions.appendChild(approveBtn);
+        actions.appendChild(rejectBtn);
+        card.appendChild(actions);
+      }
+      container.prepend(card);
+    }
+
+    function pollJob(jobId) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        try {
+          const data = await getJson('/api/advisor/jobs/' + jobId);
+          if (data.job.status === 'succeeded') {
+            clearInterval(pollTimer);
+            logLine('advisorChatLog', 'Proposta pronta.');
+            const messages = await getJson('/api/advisor/conversations/' + activeConversationId + '/messages');
+            const last = messages.messages[messages.messages.length - 1];
+            if (last && last.content.proposal_id) {
+              const proposalData = await getJson('/api/advisor/proposals/' + last.content.proposal_id);
+              renderProposalCard(proposalData.proposal, proposalData.status);
+            }
+          } else if (data.job.status === 'failed') {
+            clearInterval(pollTimer);
+            logLine('advisorChatLog', 'Job fallito: ' + (data.job.error || 'errore sconosciuto'));
+          }
+        } catch (error) { clearInterval(pollTimer); logLine('advisorChatLog', 'Errore: ' + error.message); }
+      }, 500);
+    }
+
+    document.querySelectorAll('[data-advisor-tab]').forEach((tab) => {
+      tab.onclick = () => {
+        document.querySelectorAll('[data-advisor-tab]').forEach((t) => t.classList.toggle('active', t === tab));
+        const name = tab.dataset.advisorTab;
+        document.querySelectorAll('[data-advisor-view]').forEach((view) => {
+          view.classList.toggle('active', view.dataset.advisorView === name);
+        });
+      };
+    });
+
+    $c('advisorToggleBtn').onclick = () => $c('advisorPane').classList.toggle('hidden');
+
+    $c('advisorSendBtn').onclick = async () => {
+      const treeId = $c('advisorTreeId').value.trim();
+      const nodeId = $c('advisorNodeId').value.trim();
+      let views;
+      try {
+        views = JSON.parse($c('advisorViewsInput').value || '[]');
+      } catch (error) {
+        logLine('advisorChatLog', 'JSON delle view non valido: ' + error.message);
+        return;
+      }
+      if (!treeId || !nodeId) {
+        logLine('advisorChatLog', 'tree_id e node_id sono obbligatori.');
+        return;
+      }
+      try {
+        if (!activeConversationId) {
+          const conversation = await postJson('/api/advisor/conversations', { tree_id: treeId, node_id: nodeId });
+          activeConversationId = conversation.conversation_id;
+        }
+        logLine('advisorChatLog', 'Inviato: ' + views.length + ' view su ' + nodeId);
+        const response = await postJson('/api/advisor/conversations/' + activeConversationId + '/messages', {
+          node_id: nodeId,
+          views,
+        });
+        logLine('advisorChatLog', 'Job in coda: ' + response.job_id.slice(0, 8));
+        pollJob(response.job_id);
+      } catch (error) { logLine('advisorChatLog', 'Errore: ' + error.message); }
+    };
+  })();
   </script>
 </body>
 </html>
