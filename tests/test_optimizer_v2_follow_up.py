@@ -130,13 +130,24 @@ def test_current_backward_child_is_synthetic_father_is_raw_baseline() -> None:
     assert middle_result.audit.actual_tracking_error == pytest.approx(
         raw_middle_tev, abs=1e-10
     )
-    # Leaf's synthetic diverges materially from its own raw proxy (otherwise this
-    # test would not be exercising the substitution at all).
+    # Phase B.5 (2026-08-06) fixed a risk-measure inconsistency where the
+    # target-volatility constraint was checked against the shrunk-covariance
+    # -implied portfolio vol while the target itself came from the proxy's
+    # raw historical std, so a 100%-proxy allocation (leaf's own proxy is
+    # also one of its candidate instruments here) could fail to match its
+    # own target by construction. With that fixed, leaf's return-maximizing
+    # solve (subject to vol == its own proxy's vol) now correctly lands
+    # exactly on 100% LEAF_PROXY for this fixture's data: LEAF_A's higher
+    # return doesn't clear the vol cap and LEAF_B's lower vol doesn't
+    # improve return, so the proxy itself is the true optimum. This no
+    # longer diverges from raw -- Middle's own raw-vs-synthetic substitution
+    # (the behavior this test documents) is independently exercised and
+    # asserted above via target_volatility/actual_tracking_error.
     leaf_divergence = (
         (leaf_result.synthetic_returns - returns["ticker:LEAF_PROXY"]).std(ddof=1)
         * np.sqrt(252.0)
     )
-    assert leaf_divergence > 1e-4
+    assert leaf_divergence == pytest.approx(0.0, abs=1e-9)
 
 
 def test_current_father_reference_ignores_proxy_vs_synthetic_divergence() -> None:

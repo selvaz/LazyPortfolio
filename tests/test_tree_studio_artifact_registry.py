@@ -70,15 +70,17 @@ def _config(name: str) -> dict[str, Any]:
     }
 
 
-def _fake_export_artifacts(config: dict[str, Any]) -> dict[str, tuple[bytes, str, str]]:
-    """Stand-in for the real (expensive, Market-Data-Hub-backed) exporter."""
+def _fake_export_artifacts(
+    config: dict[str, Any], *, kind: str
+) -> dict[str, tuple[bytes, str, str]]:
+    """Stand-in for the real (expensive, Market-Data-Hub-backed) exporter --
+    builds only the requested kind, matching the real function's contract."""
     root_name = config["nodes"][0]["name"]
+    if kind == "audit":
+        zip_bytes = b"PK\x03\x04-fake-audit-zip-bytes"
+        return {"audit": (zip_bytes, "application/zip", "fake-audit.zip")}
     html = f"<html><body>Report for {root_name}</body></html>".encode()
-    zip_bytes = b"PK\x03\x04-fake-audit-zip-bytes"
-    return {
-        "audit": (zip_bytes, "application/zip", "fake-audit.zip"),
-        "report": (html, "text/html; charset=utf-8", "fake-report.html"),
-    }
+    return {"report": (html, "text/html; charset=utf-8", "fake-report.html")}
 
 
 def _post(port: int, path: str, payload: dict[str, Any]) -> tuple[int, bytes]:

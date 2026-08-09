@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ProcessPoolExecutor
 from math import sqrt
 from typing import Any
 
@@ -22,6 +24,45 @@ from lazyportfolio.v2.moments import (
     CASH_LEND,
     financing_instrument,
 )
+
+
+def _limit_worker_blas_threads() -> None:
+    """``ProcessPoolExecutor`` initializer: cap each worker to a single BLAS
+    thread.
+
+    Without this, every worker process's numpy/scipy calls spin up their
+    *own* OpenBLAS thread pool sized to the machine's full core count -- N
+    worker processes x M BLAS threads each oversubscribes the machine by
+    N*M threads competing for N*M cores' worth of work. Verified live: 5
+    workers on a 6-core machine crashed with "OpenBLAS error: Memory
+    allocation still failed after 10 retries, giving up" (each worker's
+    BLAS pool alone tried to claim most of the machine). Setting the
+    env vars here (before any worker imports numpy -- this initializer
+    runs first) plus threadpool_limits at call time (belt-and-suspenders
+    for whichever BLAS build honors runtime limits vs import-time-only env
+    vars) keeps each worker single-threaded, so the process-level
+    parallelism from Phase F1 is the only parallelism in play.
+    """
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[var] = "1"
+
+
+def _estimate_fold(
+    model: V2Model, train: Any, mode: Mode, periods_per_year: float
+) -> V2Estimate:
+    """Module-level, picklable worker for parallel fold estimation (v3
+    performance roadmap Phase F1). Must stay top-level and reconstruct
+    ``HierarchicalV2Estimator()`` itself, not a bound method or closure --
+    ``ProcessPoolExecutor`` needs an importable callable, and each worker
+    process (Windows uses the "spawn" start method, no fork) starts fresh
+    with no inherited parent state to reuse anyway.
+    """
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=1):
+        return HierarchicalV2Estimator().estimate(
+            model, train, mode=mode, periods_per_year=periods_per_year
+        )
 
 
 class _V2Ledger:
@@ -77,6 +118,8 @@ class HierarchicalV2Backtester:
         transaction_cost_bps: float = 0.0,
         include_partial_last_period: bool = False,
         capture_audit_series: bool = False,
+        max_workers: int = 1,
+        expanding: bool = False,
     ) -> V2BacktestReport:
         import pandas as pd
 
@@ -111,15 +154,21 @@ class HierarchicalV2Backtester:
             estimation_frequency,
         )
         periods_per_year = _annualization_factor(estimation_frequency)
-        ledgers: dict[str, _V2Ledger] = {}
-        points: dict[str, list[tuple[Any, float]]] = {}
-        folds: list[V2Fold] = []
 
+        # Phase 1 (sequential, cheap): resolve every valid fold's train/
+        # holding slices up front -- no solving happens here. `expanding`
+        # controls the training window's shape: rolling (default) keeps it
+        # pinned to exactly train_size observations (`.tail(train_size)`),
+        # sliding forward each fold; expanding uses every observation up to
+        # the signal date, so the window only grows -- train_size is then
+        # just the minimum size before the first fold is emitted, not a cap.
+        fold_specs: list[tuple[Any, Any, Any]] = []
         for index, signal in enumerate(schedule):
             next_signal = schedule[index + 1] if index + 1 < len(schedule) else None
             if next_signal is None and not include_partial_last_period:
                 continue
-            train = estimation.loc[estimation.index <= signal].tail(train_size)
+            available = estimation.loc[estimation.index <= signal]
+            train = available if expanding else available.tail(train_size)
             if len(train) < train_size:
                 continue
             holding_mask = valuation.index > signal
@@ -128,18 +177,66 @@ class HierarchicalV2Backtester:
             holding = valuation.loc[holding_mask]
             if holding.empty:
                 continue
-            try:
-                estimate = self.estimator.estimate(
-                    model,
-                    train,
-                    mode=mode,
-                    periods_per_year=periods_per_year,
-                )
-            except Exception as exc:
-                raise V2OptimizationError(
-                    f"fold {signal.date()}: {type(exc).__name__}: {exc}"
-                ) from exc
+            fold_specs.append((signal, train, holding))
 
+        # Phase 2 (v3 performance roadmap Phase F1; embarrassingly parallel
+        # when max_workers > 1): each fold's estimate() call only depends on
+        # that fold's own training window, not on any other fold's result --
+        # the *ledger* is what carries state across folds (Phase 3), so it's
+        # the only part that must stay sequential. max_workers=1 (default)
+        # keeps today's exact sequential behavior and error semantics; opt
+        # into >1 explicitly once this is validated on real backtests, since
+        # ProcessPoolExecutor's per-worker interpreter/import cost (observed
+        # in this environment to spike well past a second under some
+        # conditions) can outweigh the savings for small fold counts.
+        estimates: list[V2Estimate] = []
+        if max_workers > 1 and len(fold_specs) > 1:
+            worker_count = min(max_workers, len(fold_specs), os.cpu_count() or 1)
+            with ProcessPoolExecutor(
+                max_workers=worker_count, initializer=_limit_worker_blas_threads
+            ) as pool:
+                futures = [
+                    pool.submit(_estimate_fold, model, train, mode, periods_per_year)
+                    for _, train, _ in fold_specs
+                ]
+                for (signal, _, _), future in zip(fold_specs, futures, strict=True):
+                    try:
+                        estimates.append(future.result())
+                    except Exception as exc:
+                        raise V2OptimizationError(
+                            f"fold {signal.date()}: {type(exc).__name__}: {exc}"
+                        ) from exc
+        else:
+            # Sequential path keeps using self.estimator (not the
+            # module-level _estimate_fold helper), preserving a custom
+            # injected estimator/optimiser -- the parallel path above can't
+            # honor that (an arbitrary custom estimator isn't guaranteed
+            # picklable across the process boundary), so it always
+            # constructs the default HierarchicalV2Estimator() itself.
+            for signal, train, _ in fold_specs:
+                try:
+                    estimates.append(
+                        self.estimator.estimate(
+                            model,
+                            train,
+                            mode=mode,
+                            periods_per_year=periods_per_year,
+                        )
+                    )
+                except Exception as exc:
+                    raise V2OptimizationError(
+                        f"fold {signal.date()}: {type(exc).__name__}: {exc}"
+                    ) from exc
+
+        # Phase 3 (sequential, required): the ledger's weights carry
+        # forward from one fold's holding period into the next rebalance,
+        # so this walk cannot parallelize regardless of worker count.
+        ledgers: dict[str, _V2Ledger] = {}
+        points: dict[str, list[tuple[Any, float]]] = {}
+        folds: list[V2Fold] = []
+        for (signal, train, holding), estimate in zip(
+            fold_specs, estimates, strict=True
+        ):
             targets = self._targets(model, estimate)
             for arm, target in targets.items():
                 ledger = ledgers.setdefault(arm, _V2Ledger(transaction_cost_bps))

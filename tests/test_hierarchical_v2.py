@@ -141,6 +141,46 @@ def test_unreachable_tev_limit_uses_minimum_excess_without_inserting_father() ->
     assert audit.solver_message.startswith("nearest feasible projection")
 
 
+def test_nearest_feasible_returns_volatility_witness_when_refinement_fails(monkeypatch) -> None:
+    """A best-effort volatility target must not abort solely because Stage C
+    cannot refine the already-proven feasible Stage-B witness."""
+
+    import scipy.optimize
+    from scipy.optimize import OptimizeResult
+
+    witness = np.array([0.40, 0.60])
+
+    def failed_refinement(*args, **kwargs):
+        return OptimizeResult(x=witness, success=False, message="numerical stop")
+
+    monkeypatch.setattr(scipy.optimize, "minimize", failed_refinement)
+    monkeypatch.setattr(
+        V2LocalOptimizer,
+        "_minimize_metric",
+        staticmethod(lambda *args, **kwargs: (0.01, witness)),
+    )
+
+    stages: list[dict[str, object]] = []
+    result = V2LocalOptimizer._lexicographic_fallback(
+        starts=[np.array([0.5, 0.5])],
+        economic_loss=lambda weights: -weights[0],
+        lower=np.array([0.0, 0.0]),
+        upper=np.array([1.0, 1.0]),
+        hard_constraints=[],
+        volatility=lambda weights: float(weights[0]),
+        target=0.5,
+        tracking_error=lambda weights: 0.0,
+        tev_limit=None,
+        tracking_error_policy="hard_fail",
+        volatility_target_policy="nearest_feasible",
+        stage_results=stages,
+    )
+
+    assert result.success
+    assert result.x == pytest.approx(witness)
+    assert stages[-1]["status"] == "nearest_feasible_witness"
+
+
 def test_backward_root_uses_raw_benchmark_and_exposes_synthetic_diagnostic() -> None:
     returns = _returns().rename(
         columns={

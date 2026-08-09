@@ -75,8 +75,19 @@ class TestRandomizedStarts:
 class TestMultiStartDiagnosticsEndToEnd:
     @pytest.mark.parametrize("objective", ["max_ratio", "max_utility", "min_risk"])
     def test_restart_candidate_count_includes_randomized_starts(
-        self, objective: str
+        self, monkeypatch, objective: str
     ) -> None:
+        # max_utility/min_risk with no volatility target/cap/TEV now qualify
+        # for the v3 roadmap's exact QP fast path (Phase B2), which reports
+        # restart_candidate_count=1 by design -- an exact convex solve needs
+        # no restarts. This test is about SLSQP's OWN multi-start diagnostic
+        # wiring, not about which route the classifier picks, so force the
+        # SLSQP path the same way the QP route's own tests do (monkeypatch,
+        # not manual save/restore -- see tests/test_v2_solver_qp_route.py for
+        # why a naive restore loses the staticmethod wrapping).
+        monkeypatch.setattr(
+            V2LocalOptimizer, "_solve_qp_convex", staticmethod(lambda *a, **k: None)
+        )
         _, audit = _solve(objective, V2Constraints(mean_estimator="empirical"))
         # 1 structured start + up to 2 boundary starts + 8 randomized starts;
         # randomized starts must actually have been fed into the search, not

@@ -278,6 +278,14 @@ class V2Audit:
     mean_reference_source: str = "none"
     risk_reference_source: str = "none"
     constraint_stage_results: tuple[dict[str, Any], ...] = ()
+    #: v3 performance-roadmap fields (see lazyportfolio.v2.problem_class).
+    #: Diagnostic today (every route still resolves to solver_strategy's two
+    #: existing values); populated meaningfully once Phase B+ routes exist.
+    problem_class: str = ""
+    solver_status: str = "ok"
+    solve_seconds: float = 0.0
+    warm_started: bool = False
+    fallback_reason: str = ""
 
 
 @dataclass

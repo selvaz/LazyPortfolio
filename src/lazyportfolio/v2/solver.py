@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from math import isfinite, sqrt
 from typing import Any, Literal
@@ -23,6 +24,7 @@ from lazyportfolio.v2.moments import (
     black_litterman_posterior,
     estimate_moments,
 )
+from lazyportfolio.v2.problem_class import classify
 from lazyportfolio.v2.validation import validate_economic_settings
 
 FinancingRegime = Literal["none", "lend", "borrow"]
@@ -329,6 +331,7 @@ class V2LocalOptimizer:
                 f"unsupported objective {objective!r}; must be one of "
                 f"{sorted(RECOGNIZED_OBJECTIVES)}"
             )
+        problem_class = classify(objective, constraints)
         clean = frame.dropna(how="any")
         if len(clean) < 3:
             raise V2OptimizationError(
@@ -390,6 +393,19 @@ class V2LocalOptimizer:
         def volatility(weights: np.ndarray) -> float:
             return float(sqrt(max(float(weights @ covariance @ weights), 0.0)))
 
+        def realized_volatility(weights: np.ndarray) -> float:
+            # Target/cap/TEV feasibility must be measured with the same risk
+            # measure the target/cap itself is computed from (the reference
+            # series' own historical std, see `_resolve_volatility`), never
+            # the shrunk-covariance-implied figure `volatility()` returns:
+            # shrinkage changes a single-asset "portfolio's" implied variance
+            # relative to that asset's own raw historical variance, so a
+            # 100%-proxy allocation would otherwise fail its own target by
+            # construction. `volatility()` remains the risk measure driving
+            # weight estimation (SLSQP loss for min_risk/max_ratio/
+            # max_utility) -- only target/cap/TEV feasibility switches.
+            return float(np.std(values @ weights, ddof=1))
+
         def tracking_error(weights: np.ndarray) -> float:
             if tracking_reference is None:
                 return 0.0
@@ -417,6 +433,125 @@ class V2LocalOptimizer:
             if constraints.max_tracking_error is not None
             else None
         )
+        # Gate every fast path on the *resolved* target/cap/TEV values, not
+        # problem_class.volatility_mode / has_tev: those only look at
+        # constraints.volatility_target/max_volatility, which stay None for
+        # a father_proxy/benchmark-referenced target (the common case for
+        # non-root nodes) even though target_periodic above is then
+        # non-None. Gating on the raw classifier fields let a fast path fire
+        # on vol-constrained nodes and silently ignore the constraint.
+        linear_constraints_only = (
+            regime == "none"
+            and target_periodic is None
+            and cap_periodic is None
+            and tev_periodic is None
+        )
+        # Deterministic seed for the common case where a father/benchmark
+        # reference series *is* one of this node's own candidate instruments
+        # (e.g. a Precious Metals node holding GLD, SLV, PPLT, PALL with
+        # father proxy GLD): 100% on that instrument is provably feasible
+        # and provably matches its own reference by construction. Hand SLSQP
+        # that witness directly via the reference series' own `.name`
+        # (set by pandas when `_risk_reference` slices `returns[node.proxy]`
+        # -- a multi-weight benchmark series has no single `.name` and is
+        # correctly skipped here) rather than relying on multi-start to
+        # rediscover it by luck.
+        proxy_seed_names: set[str] = set()
+        for reference_series in (
+            target_reference_series,
+            cap_reference_series,
+            tracking_reference_series,
+        ):
+            candidate_name = getattr(reference_series, "name", None)
+            if isinstance(candidate_name, str) and candidate_name in names:
+                proxy_seed_names.add(candidate_name)
+        proxy_seeds: list[np.ndarray] = []
+        for proxy_name in sorted(proxy_seed_names):
+            seed = np.zeros(len(names))
+            seed[names.index(proxy_name)] = 1.0
+            if np.all(seed >= lower - 1e-9) and np.all(seed <= upper + 1e-9):
+                proxy_seeds.append(seed)
+        if linear_constraints_only and problem_class.objective == "max_return":
+            lp_result = self._solve_lp_max_return(
+                names,
+                means,
+                lower,
+                upper,
+                covariance,
+                periods_per_year,
+                risk_aversion,
+                risk_free_rate,
+                constraints,
+                resolved_mean_estimator,
+                view_details,
+                problem_class.label,
+            )
+            if lp_result is not None:
+                return lp_result
+            # HiGHS failing (rare -- a well-posed LP with a bounded feasible
+            # region should always succeed) falls through to the audited
+            # SLSQP path below rather than raising, so an LP hiccup never
+            # aborts a solve the existing multi-start search could handle.
+        elif linear_constraints_only and problem_class.objective in (
+            "min_risk",
+            "max_utility",
+        ):
+            qp_result = self._solve_qp_convex(
+                objective,
+                names,
+                means,
+                excess_means,
+                lower,
+                upper,
+                covariance,
+                periods_per_year,
+                risk_aversion,
+                risk_free_rate,
+                constraints,
+                resolved_mean_estimator,
+                view_details,
+                problem_class.label,
+            )
+            if qp_result is not None:
+                return qp_result
+            # OSQP missing or failing falls through to the audited SLSQP
+            # path below, exactly like the LP route's own fallback.
+        elif (
+            regime == "none"
+            and problem_class.objective == "max_return"
+            and target_periodic is None
+            and (cap_periodic is not None or tev_periodic is not None)
+        ):
+            # v3 performance roadmap Phase C1: max_return with a volatility
+            # *cap* (never an exact equality target -- that's the hybrid
+            # warm-start below, C2) and/or a TEV cap, no financing, is a
+            # convex SOCP. Building block only: live inspection of the 3
+            # real benchmark trees found 0 nodes using cap mode (every
+            # father/benchmark-relative target defaults to exact), so this
+            # route alone has no measured real-tree benefit -- see Phase C
+            # in the roadmap doc for why C1+C2 were merged.
+            socp_result = self._solve_socp_max_return_cap(
+                names,
+                means,
+                lower,
+                upper,
+                values,
+                periods_per_year,
+                risk_aversion,
+                risk_free_rate,
+                constraints,
+                cap_periodic,
+                cap_annual,
+                tev_periodic,
+                tracking_reference,
+                resolved_mean_estimator,
+                view_details,
+                problem_class.label,
+            )
+            if socp_result is not None:
+                return socp_result
+            # Clarabel missing/failing/infeasible falls through to the
+            # audited SLSQP path below, same fallback contract as LP/QP.
         start = self._initial_weights(names, lower, upper, reference_weights)
         hard_constraints: list[dict[str, Any]] = [
             {"type": "eq", "fun": lambda weights: float(weights.sum() - 1.0)}
@@ -425,7 +560,7 @@ class V2LocalOptimizer:
             hard_constraints.append(
                 {
                     "type": "ineq",
-                    "fun": lambda weights: cap_periodic - volatility(weights),
+                    "fun": lambda weights: cap_periodic - realized_volatility(weights),
                 }
             )
         base_constraints = list(hard_constraints)
@@ -445,7 +580,9 @@ class V2LocalOptimizer:
             scipy_constraints.append(
                 {
                     "type": "eq",
-                    "fun": lambda weights: volatility(weights) - target_periodic,
+                    "fun": lambda weights: (
+                        realized_volatility(weights) - target_periodic
+                    ),
                 }
             )
 
@@ -472,62 +609,110 @@ class V2LocalOptimizer:
             self._RANDOM_RESTART_COUNT,
             self._RANDOM_RESTART_SEED,
         )
-        candidates = [start]
+        candidates = [start, *proxy_seeds]
+        warm_started = False
         if target_periodic is not None:
-            target_cap_constraints = [
-                *base_constraints,
-                {
-                    "type": "ineq",
-                    "fun": lambda weights: target_periodic - volatility(weights),
-                },
-            ]
-            cap_results = []
-            for cap_start in [start, *boundary_starts[:2]]:
-                cap_result = minimize(
-                    loss,
-                    cap_start,
-                    method="SLSQP",
-                    bounds=list(zip(lower, upper, strict=True)),
-                    constraints=target_cap_constraints,
-                    options={"ftol": 1e-12, "maxiter": 2_000, "disp": False},
+            # v3 performance roadmap Phase C2 (hybrid exact-target route):
+            # solve the convex cap-relaxed problem (target as an upper
+            # bound, not an equality) exactly via Clarabel before falling
+            # back to the expensive multi-SLSQP-call search below. This is
+            # the route that actually matters for real trees -- every
+            # father/benchmark-relative target in the 3 benchmark trees
+            # defaults to volatility_target_mode="exact" (see Phase C.1's
+            # 0%-real-coverage finding), so this is where a real wall-clock
+            # win has to come from, unlike the B1/B2/C1 fast paths.
+            #
+            # Only the "binding" case is used: if the cap-relaxed optimum
+            # lands exactly at the target, an active inequality constraint
+            # at that value already satisfies the equality-target problem,
+            # and Clarabel is an exact convex solver, so no further search
+            # is needed -- skip the expensive cap_results loop entirely
+            # (verified live: ~10-25ms faster per solve on a 3-asset
+            # fixture once measured correctly with the process's one-time
+            # sklearn/cvxpy import cost warmed up first -- an earlier,
+            # unwarmed measurement wrongly attributed several *seconds* of
+            # cold-import overhead to this code path). Feeding a
+            # non-binding SOCP point into `_frontier_starts` as an extra
+            # seed was considered too, but not implemented: `candidates`
+            # always gets `_RANDOM_RESTART_COUNT` randomized starts appended
+            # regardless of this branch (see below), so a non-binding SOCP
+            # seed only adds 2 more `_frontier_starts` sub-solves without a
+            # verified payoff -- left for a later pass once real-tree
+            # benchmarking (Phase A1's harness) shows it's worth the risk.
+            socp_candidate = None
+            if regime == "none":
+                socp_weights = self._solve_socp_cap_weights(
+                    names, means, lower, upper, values,
+                    target_periodic, tracking_reference, tev_periodic,
                 )
-                if cap_result.success and self._is_feasible(
-                    cap_result.x,
-                    lower,
-                    upper,
-                    volatility,
-                    None,
-                    target_periodic,
-                    tracking_error,
-                    tev_periodic,
+                if socp_weights is not None and self._is_feasible(
+                    socp_weights, lower, upper, realized_volatility,
+                    None, target_periodic, tracking_error, tev_periodic,
                 ):
-                    cap_results.append(cap_result)
-            binding = [
-                result
-                for result in cap_results
-                if abs(volatility(result.x) - target_periodic) <= 2e-6
-            ]
-            if binding:
-                candidates = [min(binding, key=lambda item: float(item.fun)).x]
+                    socp_candidate = socp_weights
+            if socp_candidate is not None and abs(
+                realized_volatility(socp_candidate) - target_periodic
+            ) <= 2e-6:
+                candidates = [socp_candidate]
+                warm_started = True
             else:
-                candidates.extend(
-                    self._frontier_starts(
-                        [start, *boundary_starts[:2]],
-                        means,
+                target_cap_constraints = [
+                    *base_constraints,
+                    {
+                        "type": "ineq",
+                        "fun": lambda weights: (
+                            target_periodic - realized_volatility(weights)
+                        ),
+                    },
+                ]
+                cap_results = []
+                for cap_start in [start, *proxy_seeds, *boundary_starts[:2]]:
+                    cap_result = minimize(
+                        loss,
+                        cap_start,
+                        method="SLSQP",
+                        bounds=list(zip(lower, upper, strict=True)),
+                        constraints=target_cap_constraints,
+                        options={"ftol": 1e-12, "maxiter": 2_000, "disp": False},
+                    )
+                    if cap_result.success and self._is_feasible(
+                        cap_result.x,
                         lower,
                         upper,
-                        base_constraints,
-                        volatility,
+                        realized_volatility,
+                        None,
                         target_periodic,
                         tracking_error,
                         tev_periodic,
-                        cap_periodic,
+                    ):
+                        cap_results.append(cap_result)
+                binding = [
+                    result
+                    for result in cap_results
+                    if abs(realized_volatility(result.x) - target_periodic) <= 2e-6
+                ]
+                if binding:
+                    candidates = [min(binding, key=lambda item: float(item.fun)).x]
+                else:
+                    candidates.extend(
+                        self._frontier_starts(
+                            [start, *proxy_seeds, *boundary_starts[:2]],
+                            means,
+                            lower,
+                            upper,
+                            base_constraints,
+                            realized_volatility,
+                            target_periodic,
+                            tracking_error,
+                            tev_periodic,
+                            cap_periodic,
+                        )
                     )
-                )
         else:
             candidates.extend(boundary_starts[:2])
         candidates.extend(randomized_starts)
 
+        solve_started = time.perf_counter()
         accepted: list[Any] = []
         for candidate in candidates:
             result = minimize(
@@ -542,7 +727,7 @@ class V2LocalOptimizer:
                 result.x,
                 lower,
                 upper,
-                volatility,
+                realized_volatility,
                 target_periodic,
                 cap_periodic,
                 tracking_error,
@@ -555,12 +740,12 @@ class V2LocalOptimizer:
             result = min(accepted, key=lambda item: float(item.fun))
         elif target_periodic is not None or tev_periodic is not None:
             result = self._lexicographic_fallback(
-                [start, *boundary_starts, *randomized_starts],
+                [start, *proxy_seeds, *boundary_starts, *randomized_starts],
                 loss,
                 lower,
                 upper,
                 hard_constraints,
-                volatility,
+                realized_volatility,
                 target_periodic,
                 tracking_error,
                 tev_periodic,
@@ -573,6 +758,7 @@ class V2LocalOptimizer:
             raise V2OptimizationError(
                 "local optimiser found no audited feasible solution"
             )
+        solve_seconds = time.perf_counter() - solve_started
 
         restart_candidate_count = len(candidates)
         restart_objective_spread = 0.0
@@ -583,8 +769,27 @@ class V2LocalOptimizer:
         weights = np.asarray(result.x, dtype=float)
         weights[np.abs(weights) < 1e-10] = 0.0
         weights /= weights.sum()
-        self._audit_hard_constraints(weights, lower, upper, cap_periodic, volatility)
-        actual_vol = volatility(weights) * annualizer
+        self._audit_hard_constraints(
+            weights, lower, upper, cap_periodic, realized_volatility
+        )
+        # `actual_vol` switches to the realized measure only when a
+        # target/cap was actually enforced above, so the reported
+        # actual_volatility never contradicts what the constraint checked
+        # (e.g. exceeding volatility_cap just because a *different* risk
+        # measure was used to report vs. enforce it) -- see
+        # `realized_volatility`'s docstring. When no target/cap is active,
+        # `actual_vol` must stay the shrunk-covariance figure: it is what
+        # `loss()` actually optimized for min_risk/max_utility, what the QP
+        # route (`_solve_qp_convex`) reports for the same unconstrained
+        # problems, and what max_ratio's Sharpe denominator used internally
+        # -- switching it there would make objective_value self-inconsistent
+        # with actual_volatility, and inconsistent across routes/solves of
+        # the identical unconstrained problem, with no target/cap bug to fix.
+        actual_vol = (
+            realized_volatility(weights)
+            if target_periodic is not None or cap_periodic is not None
+            else volatility(weights)
+        ) * annualizer
         actual_tev = (
             tracking_error(weights) * annualizer
             if tracking_reference is not None
@@ -652,7 +857,7 @@ class V2LocalOptimizer:
                 if target_periodic is None
                 else (
                     "matched"
-                    if abs(volatility(weights) - target_periodic) <= 2e-6
+                    if abs(realized_volatility(weights) - target_periodic) <= 2e-6
                     else "nearest_feasible"
                 )
             ),
@@ -690,6 +895,466 @@ class V2LocalOptimizer:
             constraint_stage_results=tuple(stage_results),
             restart_candidate_count=restart_candidate_count,
             restart_objective_spread=restart_objective_spread,
+            problem_class=problem_class.label,
+            solver_status="nearest_feasible_fallback" if projected else "ok",
+            solve_seconds=solve_seconds,
+            warm_started=warm_started,
+            fallback_reason=(
+                "no multi-start candidate satisfied hard constraints; used the "
+                "lexicographic nearest-feasible projection"
+                if projected
+                else ""
+            ),
+        )
+        return dict(zip(names, weights, strict=True)), audit
+
+    @staticmethod
+    def _solve_lp_max_return(
+        names: list[str],
+        means: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        covariance: np.ndarray,
+        periods_per_year: float,
+        risk_aversion: float,
+        risk_free_rate: float,
+        constraints: V2Constraints,
+        resolved_mean_estimator: str,
+        view_details: tuple[dict[str, Any], ...],
+        problem_class_label: str,
+    ) -> tuple[dict[str, float], V2Audit] | None:
+        """Exact LP fast path: ``objective='max_return'``, no vol target/cap,
+        no TEV, no financing, only budget + box bounds -- v3 performance
+        roadmap Phase B (docs/hierarchical-optimizer-performance-plan.md).
+        A linear objective over linear equality/bound constraints is a
+        well-posed LP; HiGHS (``scipy.optimize.linprog``) is an exact global
+        solver for it, unlike SLSQP's non-convex multi-start heuristic, so
+        this route can honestly claim global optimality.
+
+        Returns ``None`` (never raises) if HiGHS doesn't report success, so
+        the caller falls back to the audited SLSQP path rather than
+        silently accept a non-optimal result.
+        """
+        from scipy.optimize import linprog
+
+        started = time.perf_counter()
+        result = linprog(
+            c=-means,
+            A_eq=[np.ones(len(names))],
+            b_eq=[1.0],
+            bounds=list(zip(lower, upper, strict=True)),
+            method="highs",
+        )
+        solve_seconds = time.perf_counter() - started
+        if not result.success:
+            return None
+
+        weights = np.asarray(result.x, dtype=float)
+        weights[np.abs(weights) < 1e-10] = 0.0
+        total = weights.sum()
+        if total <= 0.0:
+            return None
+        weights /= total
+        annualizer = sqrt(periods_per_year)
+        actual_vol = (
+            float(sqrt(max(float(weights @ covariance @ weights), 0.0))) * annualizer
+        )
+        expected_return_annualized = float(means @ weights) * periods_per_year
+        posterior_all = (
+            constraints.view_covariance_policy == "posterior_all" and bool(constraints.views)
+        )
+        audit = V2Audit(
+            target_reference="none",
+            target_volatility=None,
+            actual_volatility=actual_vol,
+            cap_reference="none",
+            volatility_cap=None,
+            tracking_error_limit=None,
+            actual_tracking_error=None,
+            minimum_slack={
+                name: float(weights[index] - lower[index]) for index, name in enumerate(names)
+            },
+            maximum_slack={
+                name: float(upper[index] - weights[index]) for index, name in enumerate(names)
+            },
+            sum_weights=float(weights.sum()),
+            solver_message=str(result.message),
+            target_status="not_requested",
+            tracking_error_status="not_requested",
+            configured_objective="max_return",
+            effective_objective="max_return",
+            expected_return_annualized=expected_return_annualized,
+            objective_value=expected_return_annualized,
+            soft_constraint_violation=0.0,
+            configured_mean_estimator=constraints.mean_estimator,
+            resolved_mean_estimator=resolved_mean_estimator,
+            views_applied=len(view_details),
+            view_details=view_details,
+            risk_aversion=risk_aversion,
+            risk_free_rate=risk_free_rate,
+            covariance_estimator=constraints.covariance_estimator,
+            covariance_estimator_class={
+                "shrunk_fixed": "ShrunkCovariance",
+                "ledoit_wolf": "LedoitWolf",
+            }[constraints.covariance_estimator],
+            risk_covariance_role="posterior" if posterior_all else "prior",
+            objective_covariance_role="posterior" if posterior_all else "prior",
+            view_covariance_policy=constraints.view_covariance_policy,
+            volatility_target_mode=constraints.volatility_target_mode,
+            global_optimality_claim=True,
+            solver_strategy="lp_highs",
+            restart_candidate_count=1,
+            restart_objective_spread=0.0,
+            problem_class=problem_class_label,
+            solver_status="ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason="",
+        )
+        return dict(zip(names, weights, strict=True)), audit
+
+    @staticmethod
+    def _solve_qp_convex(
+        objective: str,
+        names: list[str],
+        means: np.ndarray,
+        excess_means: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        covariance: np.ndarray,
+        periods_per_year: float,
+        risk_aversion: float,
+        risk_free_rate: float,
+        constraints: V2Constraints,
+        resolved_mean_estimator: str,
+        view_details: tuple[dict[str, Any], ...],
+        problem_class_label: str,
+    ) -> tuple[dict[str, float], V2Audit] | None:
+        """Exact QP fast path: ``objective`` in ``{'min_risk', 'max_utility'}``,
+        no vol target/cap, no TEV, no financing, only budget + box bounds --
+        v3 performance roadmap Phase B (docs/hierarchical-optimizer-performance-plan.md).
+        Both objectives are convex quadratics over linear equality/bound
+        constraints, a well-posed QP; OSQP is an exact convex solver for it,
+        unlike SLSQP's non-convex multi-start heuristic, so this route can
+        honestly claim global optimality.
+
+        Mirrors the periodic-scale objective SLSQP's ``loss()`` minimizes for
+        these two objectives exactly (same sign convention, same
+        ``covariance``/``excess_means`` -- already view-adjusted by
+        ``apply_views()`` upstream, never recomputed here):
+        ``min_risk`` minimizes ``w'Sigma w``; ``max_utility`` minimizes
+        ``(risk_aversion/2) w'Sigma w - excess_means'w``.
+
+        Returns ``None`` (never raises) if OSQP isn't installed or doesn't
+        report success, so the caller falls back to the audited SLSQP path
+        rather than silently accept a non-optimal result.
+        """
+        try:
+            import osqp
+        except ImportError:  # pragma: no cover - optional fast path
+            return None
+        import scipy.sparse as sp
+
+        count = len(names)
+        # OSQP minimizes 0.5 x'Px + q'x, so P must equal 2x the target
+        # quadratic form's own matrix (min_risk's w'Sigma w has none of its
+        # own leading factor; max_utility's loss carries risk_aversion/2).
+        # p_full already includes that factor of 2 -- average(p_full,
+        # p_full.T) only defensively symmetrizes a not-quite-symmetric
+        # covariance, it must NOT add another factor of 2 on top (summing
+        # instead of averaging silently doubled max_utility's effective
+        # risk_aversion, verified live against an independent multi-start
+        # SLSQP cross-check: OSQP converged to a real, different, and worse
+        # KKT point until this was fixed).
+        if objective == "min_risk":
+            p_full = 2.0 * covariance
+            linear = np.zeros(count)
+        else:
+            p_full = risk_aversion * covariance
+            linear = -excess_means
+        p_matrix = sp.csc_matrix(0.5 * (p_full + p_full.T))
+        a_matrix = sp.csc_matrix(np.vstack([np.ones((1, count)), np.eye(count)]))
+        constraint_lower = np.concatenate([[1.0], lower])
+        constraint_upper = np.concatenate([[1.0], upper])
+
+        started = time.perf_counter()
+        solver = osqp.OSQP()
+        solver.setup(
+            P=p_matrix,
+            q=linear,
+            A=a_matrix,
+            l=constraint_lower,
+            u=constraint_upper,
+            verbose=False,
+            # OSQP's default eps_abs/eps_rel (1e-3) are tuned for
+            # O(1)-scale problems; a periodic covariance's entries are
+            # O(1e-4) to O(1e-5), so the default tolerance lets OSQP report
+            # "solved" tens of iterations before it reaches the true
+            # optimum (verified live: default settings left ~30% excess
+            # variance on a real fixture). Tighten to the estimator's own
+            # precision and polish the active-set solution so this route's
+            # global-optimality claim actually holds.
+            eps_abs=1e-10,
+            eps_rel=1e-10,
+            max_iter=20_000,
+            polishing=True,
+        )
+        # raise_error=False: this route already inspects result.info.status
+        # itself and returns None (falling back to SLSQP) on anything but
+        # "solved" -- never let OSQP raise instead of returning a status.
+        result = solver.solve(raise_error=False)
+        solve_seconds = time.perf_counter() - started
+        if result.info.status != "solved":
+            return None
+
+        weights = np.asarray(result.x, dtype=float)
+        weights[np.abs(weights) < 1e-10] = 0.0
+        total = weights.sum()
+        if total <= 0.0:
+            return None
+        weights /= total
+        annualizer = sqrt(periods_per_year)
+        actual_vol = (
+            float(sqrt(max(float(weights @ covariance @ weights), 0.0))) * annualizer
+        )
+        expected_return_annualized = float(means @ weights) * periods_per_year
+        if objective == "max_utility":
+            objective_value = (
+                expected_return_annualized
+                - risk_free_rate
+                - (risk_aversion / 2.0) * actual_vol**2
+            )
+        else:
+            objective_value = actual_vol
+        posterior_all = (
+            constraints.view_covariance_policy == "posterior_all" and bool(constraints.views)
+        )
+        audit = V2Audit(
+            target_reference="none",
+            target_volatility=None,
+            actual_volatility=actual_vol,
+            cap_reference="none",
+            volatility_cap=None,
+            tracking_error_limit=None,
+            actual_tracking_error=None,
+            minimum_slack={
+                name: float(weights[index] - lower[index]) for index, name in enumerate(names)
+            },
+            maximum_slack={
+                name: float(upper[index] - weights[index]) for index, name in enumerate(names)
+            },
+            sum_weights=float(weights.sum()),
+            solver_message=str(result.info.status),
+            target_status="not_requested",
+            tracking_error_status="not_requested",
+            configured_objective=objective,
+            effective_objective=objective,
+            expected_return_annualized=expected_return_annualized,
+            objective_value=objective_value,
+            soft_constraint_violation=0.0,
+            configured_mean_estimator=constraints.mean_estimator,
+            resolved_mean_estimator=resolved_mean_estimator,
+            views_applied=len(view_details),
+            view_details=view_details,
+            risk_aversion=risk_aversion,
+            risk_free_rate=risk_free_rate,
+            covariance_estimator=constraints.covariance_estimator,
+            covariance_estimator_class={
+                "shrunk_fixed": "ShrunkCovariance",
+                "ledoit_wolf": "LedoitWolf",
+            }[constraints.covariance_estimator],
+            risk_covariance_role="posterior" if posterior_all else "prior",
+            objective_covariance_role="posterior" if posterior_all else "prior",
+            view_covariance_policy=constraints.view_covariance_policy,
+            volatility_target_mode=constraints.volatility_target_mode,
+            global_optimality_claim=True,
+            solver_strategy="qp_osqp",
+            restart_candidate_count=1,
+            restart_objective_spread=0.0,
+            problem_class=problem_class_label,
+            solver_status="ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason="",
+        )
+        return dict(zip(names, weights, strict=True)), audit
+
+    @staticmethod
+    def _solve_socp_cap_weights(
+        names: list[str],
+        means: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        values: np.ndarray,
+        cap_periodic: float | None,
+        tracking_reference: np.ndarray | None,
+        tev_periodic: float | None,
+    ) -> np.ndarray | None:
+        """Exact convex core shared by the Phase C SOCP cap route (C1) and
+        the hybrid exact-target warm start (C2, in ``_solve_core``):
+        maximize ``means'w`` subject to budget + box bounds, an optional
+        realized-volatility cap, and an optional realized-TEV cap, via
+        Clarabel.
+
+        Both risk constraints are built as the L2 norm of an affine
+        expression in centered returns -- exactly ``realized_volatility``/
+        ``tracking_error``'s own formula (``std(x) == ||demean(x)||_2 /
+        sqrt(T-1)`` for ddof=1), not a covariance approximation, so this
+        route's constraint is numerically identical to what SLSQP enforces
+        elsewhere in ``_solve_core``, never a looser or tighter proxy for
+        it (the whole point of Phase B.5's risk-measure-consistency fix).
+
+        Returns ``None`` (never raises) on missing cvxpy/clarabel, solver
+        failure, or infeasibility, so callers always have an audited SLSQP
+        fallback.
+        """
+        try:
+            import cvxpy as cp
+        except ImportError:  # pragma: no cover - optional fast path
+            return None
+
+        count = len(names)
+        scale = sqrt(max(len(values) - 1, 1))
+        centered = values - values.mean(axis=0)
+        # cvxpy's installed type stubs don't fully cover cp.sum/cp.norm/
+        # Problem.solve -- this whole block is a lazily-imported, optional
+        # fast path (never a required import), so the noise isn't worth
+        # chasing; every value crossing back out of this function is
+        # re-annotated as a plain np.ndarray below.
+        w = cp.Variable(count)
+        socp_constraints = [cp.sum(w) == 1.0, w >= lower, w <= upper]  # type: ignore[attr-defined]
+        if cap_periodic is not None:
+            socp_constraints.append(
+                cp.norm(centered @ w, 2) <= cap_periodic * scale  # type: ignore[attr-defined]
+            )
+        if tev_periodic is not None:
+            if tracking_reference is None:
+                return None
+            active_reference_centered = tracking_reference - tracking_reference.mean()
+            socp_constraints.append(
+                cp.norm(centered @ w - active_reference_centered, 2)  # type: ignore[attr-defined]
+                <= tev_periodic * scale
+            )
+        problem = cp.Problem(cp.Maximize(means @ w), socp_constraints)
+        try:
+            problem.solve(solver=cp.CLARABEL)  # type: ignore[no-untyped-call]
+        except cp.error.SolverError:
+            return None
+        if w.value is None or problem.status not in (
+            cp.OPTIMAL,
+            cp.OPTIMAL_INACCURATE,
+        ):
+            return None
+        weights = np.asarray(w.value, dtype=float)
+        weights[np.abs(weights) < 1e-10] = 0.0
+        total = weights.sum()
+        if total <= 0.0:
+            return None
+        weights /= total
+        return weights
+
+    @staticmethod
+    def _solve_socp_max_return_cap(
+        names: list[str],
+        means: np.ndarray,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        values: np.ndarray,
+        periods_per_year: float,
+        risk_aversion: float,
+        risk_free_rate: float,
+        constraints: V2Constraints,
+        cap_periodic: float | None,
+        cap_annual: float | None,
+        tev_periodic: float | None,
+        tracking_reference: np.ndarray | None,
+        resolved_mean_estimator: str,
+        view_details: tuple[dict[str, Any], ...],
+        problem_class_label: str,
+    ) -> tuple[dict[str, float], V2Audit] | None:
+        """Exact SOCP fast path (v3 performance roadmap Phase C1):
+        ``objective='max_return'`` with a volatility *cap* and/or TEV cap
+        (never an exact equality target -- that's the hybrid warm start in
+        ``_solve_core``, C2), no financing. Clarabel is an exact convex
+        solver for this SOCP, so this route can honestly claim global
+        optimality, same rationale as the LP/QP routes (B1/B2).
+        """
+        started = time.perf_counter()
+        weights = V2LocalOptimizer._solve_socp_cap_weights(
+            names, means, lower, upper, values, cap_periodic,
+            tracking_reference, tev_periodic,
+        )
+        solve_seconds = time.perf_counter() - started
+        if weights is None:
+            return None
+
+        annualizer = sqrt(periods_per_year)
+        realized_vol = float(np.std(values @ weights, ddof=1)) * annualizer
+        # Defensive: never report a route as having satisfied a constraint
+        # it actually violated (e.g. a near-boundary numerical slip).
+        if cap_annual is not None and realized_vol > cap_annual + 1e-6:
+            return None
+        expected_return_annualized = float(means @ weights) * periods_per_year
+        actual_tev = None
+        tracking_error_status = "not_requested"
+        if tracking_reference is not None:
+            active = values @ weights - tracking_reference
+            actual_tev = float(np.std(active, ddof=1)) * annualizer
+            if constraints.max_tracking_error is not None:
+                if actual_tev > constraints.max_tracking_error + 1e-6:
+                    return None
+                tracking_error_status = "within_limit"
+        posterior_all = (
+            constraints.view_covariance_policy == "posterior_all"
+            and bool(constraints.views)
+        )
+        audit = V2Audit(
+            target_reference="none",
+            target_volatility=None,
+            actual_volatility=realized_vol,
+            cap_reference=constraints.max_volatility_reference,
+            volatility_cap=cap_annual,
+            tracking_error_limit=constraints.max_tracking_error,
+            actual_tracking_error=actual_tev,
+            minimum_slack={
+                name: float(weights[index] - lower[index]) for index, name in enumerate(names)
+            },
+            maximum_slack={
+                name: float(upper[index] - weights[index]) for index, name in enumerate(names)
+            },
+            sum_weights=float(weights.sum()),
+            solver_message="clarabel SOCP: optimal",
+            target_status="not_requested",
+            tracking_error_status=tracking_error_status,
+            configured_objective="max_return",
+            effective_objective="max_return",
+            expected_return_annualized=expected_return_annualized,
+            objective_value=expected_return_annualized,
+            soft_constraint_violation=0.0,
+            configured_mean_estimator=constraints.mean_estimator,
+            resolved_mean_estimator=resolved_mean_estimator,
+            views_applied=len(view_details),
+            view_details=view_details,
+            risk_aversion=risk_aversion,
+            risk_free_rate=risk_free_rate,
+            covariance_estimator=constraints.covariance_estimator,
+            covariance_estimator_class={
+                "shrunk_fixed": "ShrunkCovariance",
+                "ledoit_wolf": "LedoitWolf",
+            }[constraints.covariance_estimator],
+            risk_covariance_role="posterior" if posterior_all else "prior",
+            objective_covariance_role="posterior" if posterior_all else "prior",
+            view_covariance_policy=constraints.view_covariance_policy,
+            volatility_target_mode=constraints.volatility_target_mode,
+            global_optimality_claim=True,
+            solver_strategy="socp_clarabel",
+            restart_candidate_count=1,
+            restart_objective_spread=0.0,
+            problem_class=problem_class_label,
+            solver_status="ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason="",
         )
         return dict(zip(names, weights, strict=True)), audit
 
@@ -745,7 +1410,9 @@ class V2LocalOptimizer:
             min_weights=dict(zip(names, lower, strict=True)),
             max_weights=dict(zip(names, upper, strict=True)),
         )
+        solve_started = time.perf_counter()
         estimator.fit(clean)
+        solve_seconds = time.perf_counter() - solve_started
         weights = np.asarray(estimator.weights_, dtype=float)
         if not np.all(np.isfinite(weights)):
             raise V2OptimizationError("HRP returned non-finite weights")
@@ -812,6 +1479,11 @@ class V2LocalOptimizer:
             hrp_distance_metric="pearson",
             hrp_linkage_method="ward",
             hrp_risk_measure="variance",
+            problem_class=classify("hrp", constraints).label,
+            solver_status="ok",
+            solve_seconds=solve_seconds,
+            warm_started=False,
+            fallback_reason="",
         )
         return dict(zip(names, weights, strict=True)), audit
 
@@ -1042,7 +1714,7 @@ class V2LocalOptimizer:
         reoptimized away by a later stage.
         """
 
-        from scipy.optimize import minimize
+        from scipy.optimize import OptimizeResult, minimize
 
         bounds = list(zip(lower, upper, strict=True))
         stage_constraints = list(hard_constraints)
@@ -1241,6 +1913,31 @@ class V2LocalOptimizer:
                     }
                 )
                 return best
+
+        # A nearest-feasible volatility witness is already a valid portfolio:
+        # Stage B found it under every hard constraint (and under the fixed
+        # TEV bound, when one exists).  SLSQP can nevertheless fail to make
+        # further economic progress inside the intentionally tiny band around
+        # that witness.  That numerical failure must not abort a walk-forward
+        # fold after the user explicitly chose best-effort target handling.
+        # Return the proven feasible witness, preserving the closest-volatility
+        # result and making the lack of Stage-C improvement auditable.
+        if volatility_target_policy == "nearest_feasible" and dev_weights is not None:
+            stage_results.append(
+                {
+                    "stage": "objective",
+                    "status": "nearest_feasible_witness",
+                    "note": (
+                        "economic refinement failed inside the resolved "
+                        "volatility band; returned the Stage-B feasible witness"
+                    ),
+                }
+            )
+            return OptimizeResult(
+                x=np.asarray(dev_weights, dtype=float),
+                success=True,
+                message="nearest-feasible volatility witness",
+            )
 
         raise V2OptimizationError(
             "the economic objective could not be optimized subject to the "

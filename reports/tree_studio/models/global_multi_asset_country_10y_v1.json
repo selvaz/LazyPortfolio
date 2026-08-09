@@ -1,0 +1,150 @@
+{
+  "root_id": "global_multi_asset",
+  "currency": "USD",
+  "nodes": [
+    {
+      "id": "global_multi_asset",
+      "name": "Global Multi-Asset",
+      "children": ["global_equity", "usd_fixed_income", "international_fixed_income", "commodities", "alternatives"],
+      "instruments": [],
+      "proxy": "",
+      "goal": {"objective": "max_return"},
+      "constraints": {
+        "cash_enabled": false,
+        "max_leverage": 1.0,
+        "borrow_spread_bps": 0.0,
+        "risk_free_rate": 0.0,
+        "volatility_reference": "benchmark",
+        "volatility_target_mode": "exact",
+        "volatility_target_policy": "nearest_feasible",
+        "max_volatility_reference": "none",
+        "tracking_error_reference": "declared",
+        "tracking_error_policy": "hard_fail",
+        "volatility_cap_policy": "hard_fail",
+        "mean_estimator": "auto",
+        "mean_reference_kind": "none",
+        "covariance_estimator": "shrunk_fixed"
+      }
+    },
+    {
+      "id": "global_equity",
+      "name": "Global Equity",
+      "children": ["developed_ex_us", "emerging_markets"],
+      "instruments": ["SPY"],
+      "proxy": "ACWI",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "developed_ex_us",
+      "name": "Developed ex-US",
+      "children": ["europe"],
+      "instruments": ["EWJ", "EWC", "EWA"],
+      "proxy": "VEA",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "europe",
+      "name": "Europe",
+      "children": [],
+      "instruments": ["EWG", "EWQ", "EWI", "EWU"],
+      "proxy": "VGK",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "emerging_markets",
+      "name": "Emerging Markets",
+      "children": [],
+      "instruments": ["MCHI", "INDA", "EWT", "EWY"],
+      "proxy": "VWO",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "usd_fixed_income",
+      "name": "USD Fixed Income",
+      "children": ["government_duration"],
+      "instruments": ["LQD", "HYG", "TIP", "MUB"],
+      "proxy": "AGG",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "government_duration",
+      "name": "Government Duration",
+      "children": [],
+      "instruments": ["SHY", "IEI", "TLT"],
+      "proxy": "IEF",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "international_fixed_income",
+      "name": "International Fixed Income",
+      "children": ["emerging_debt"],
+      "instruments": ["BWX", "EUHY", "IHY"],
+      "proxy": "BNDX",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "emerging_debt",
+      "name": "Emerging Debt",
+      "children": [],
+      "instruments": ["CEMB", "HYEM", "EMLC"],
+      "proxy": "EMB",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "commodities",
+      "name": "Broad Commodities",
+      "children": ["precious_metals", "agriculture"],
+      "instruments": ["USO", "DBB", "CPER"],
+      "proxy": "DBC",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "precious_metals",
+      "name": "Precious Metals",
+      "children": [],
+      "instruments": ["GLD", "SLV", "PPLT", "PALL"],
+      "proxy": "GLD",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "agriculture",
+      "name": "Agriculture",
+      "children": [],
+      "instruments": ["CORN", "SOYB", "WEAT"],
+      "proxy": "DBA",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    },
+    {
+      "id": "alternatives",
+      "name": "Diversifying Alternatives",
+      "children": [],
+      "instruments": ["WTMF", "MNA", "BIL"],
+      "proxy": "QAI",
+      "goal": {"objective": "max_return"},
+      "constraints": {"cash_enabled": false, "max_leverage": 1.0, "borrow_spread_bps": 0.0, "risk_free_rate": 0.0, "volatility_reference": "father_proxy", "volatility_target_mode": "exact", "volatility_target_policy": "nearest_feasible", "max_volatility_reference": "none", "tracking_error_reference": "declared", "tracking_error_policy": "hard_fail", "volatility_cap_policy": "hard_fail", "mean_estimator": "auto", "mean_reference_kind": "none", "covariance_estimator": "shrunk_fixed"}
+    }
+  ],
+  "data": {"start": "2016-08-01", "end": "", "risk_free_annual": 0.0, "borrow_spread_bps": 0.0},
+  "backtest": {
+    "id": "global-multi-asset-country-10y-v1",
+    "train_size": 102,
+    "estimation_frequency": "W",
+    "rebalance_frequency": "M",
+    "transaction_cost_bps": 0.0,
+    "forward_enabled": true,
+    "hierarchy_mode": "synthetic_reconstructed",
+    "benchmark": {"id": "B0", "name": "Global 60/40 (ACWI/AGG/BNDX)", "weights": {"ACWI": 0.6, "AGG": 0.2, "BNDX": 0.2}},
+    "scientific_study": {"enabled": false}
+  }
+}
