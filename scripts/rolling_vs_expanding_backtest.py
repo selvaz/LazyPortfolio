@@ -21,13 +21,25 @@ the results are already durably saved to run_history by that point) via
 LazyTools' TelegramClient, using TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID from
 the environment (User-level env vars on this machine).
 
-Run: python scripts/rolling_vs_expanding_backtest.py [tree name ...]
+Run: python scripts/rolling_vs_expanding_backtest.py [tree name ...] [--skip-pruning]
 (default: Global Multi-Asset, Global Multi-Asset - TEV 7-10-5, and their
 "- Leverage 150" variants -- cash_enabled + max_leverage=1.5 on every node)
+
+After both windows are done for PRUNING_TREES (Global Multi-Asset and its
+TEV variant, not the leverage variants), the dynamic adaptive pruning
+backtest (scripts/adaptive_pruning_backtest.evaluate_adaptive_pruning) is
+also run, with cumulative evidence (evidence_window_years=None) -- validated
+on 2026-08-09 to clearly beat both a 3-year rolling evidence window and the
+old static one-shot gate this replaced. Its reference walk-forward
+(expanding=False) hits this job's own rolling run's in-memory cache, so the
+only added cost is the per-fold candidate re-estimation. Never writes a new
+tree: this is evidence, not promotion. Use --skip-pruning to leave a run's
+wall-clock unchanged.
 """
 
 from __future__ import annotations
 
+import argparse
 import html
 import sys
 import time
@@ -40,6 +52,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "project"))
 
 import tree_studio  # noqa: E402  (reuses _run_full_backtest/_v2_export_artifacts/_config_hash)
+from adaptive_pruning_backtest import evaluate_adaptive_pruning  # noqa: E402
 
 from lazyportfolio.v2 import run_history, store  # noqa: E402
 
@@ -49,6 +62,15 @@ DEFAULT_TREES = [
     "Global Multi-Asset - Leverage 150",
     "Global Multi-Asset - TEV 7-10-5 - Leverage 150",
 ]
+#: Trees that get the (more expensive) adaptive pruning evidence evaluated
+#: every night, on top of their plain rolling/expanding backtest -- the two
+#: base variants validated on 2026-08-09 (dynamic, cumulative evidence beats
+#: both a static one-shot gate and a 3-year rolling evidence window). The
+#: leverage variants are left out deliberately: not validated for those yet.
+PRUNING_TREES = {
+    "Global Multi-Asset",
+    "Global Multi-Asset - TEV 7-10-5",
+}
 MAX_WORKERS = 4
 LAZYTOOLS_SRC = ROOT.parent / "LazyTools" / "src"
 
@@ -150,7 +172,7 @@ def _build_report_html(
 """
 
 
-def run_variant(name: str, *, expanding: bool) -> dict[str, Any]:
+def run_variant(name: str, *, expanding: bool, send_telegram: bool = True) -> dict[str, Any]:
     """Run one methodology and attach TWO artifacts to its run_history row:
     the real Tree Studio client report (``kind="report"``, built by
     ``tree_studio._v2_export_artifacts`` -- the exact same
@@ -243,11 +265,12 @@ def run_variant(name: str, *, expanding: bool) -> dict[str, Any]:
         f"Sharpe {final_metrics.get('annualized_sharpe', 0):.2f} | "
         f"max DD {final_metrics.get('max_drawdown', 0):.2%}"
     )
-    _send_telegram_document(
-        content=client_blob,
-        filename=f"{store.sanitize_model_name(name)}_{label}_client_report.html",
-        caption=caption,
-    )
+    if send_telegram:
+        _send_telegram_document(
+            content=client_blob,
+            filename=f"{store.sanitize_model_name(name)}_{label}_client_report.html",
+            caption=caption,
+        )
 
     summary_html = _build_report_html(
         tree_name=name,
@@ -274,9 +297,53 @@ def run_variant(name: str, *, expanding: bool) -> dict[str, Any]:
     return payload
 
 
+def _evaluate_and_send_adaptive_pruning(name: str) -> None:
+    """Dynamic, per-fold, causal pruning evidence -- reused evidence window
+    is cumulative (``evidence_window_years=None``): each rebalance date
+    prunes from the node-vs-father OOS track record accumulated since
+    burn-in, not a fixed lookback. Validated on Global Multi-Asset
+    (2026-08-09) to clearly beat both a 3-year rolling evidence window and
+    the previous static one-shot pruning gate this replaces here.
+
+    ``expanding=False`` (the ``run()`` default) so the reference walk-forward
+    inside ``evaluate_adaptive_pruning`` hits ``_run_full_backtest``'s
+    in-memory cache from this job's own ``run_variant(name, expanding=False)``
+    call above instead of recomputing it. A failure here must never take
+    down the job that already durably saved the rolling/expanding results.
+    """
+    try:
+        payload = evaluate_adaptive_pruning(name, workers=MAX_WORKERS, evidence_window_years=None)
+    except Exception as exc:  # noqa: BLE001 -- pruning evidence is a bonus, never fatal to the job
+        _log(f"{name!r}: adaptive pruning failed ({type(exc).__name__}: {exc}), continuing")
+        return
+    final = payload["metrics"].get("FINAL", {})
+    static = payload["metrics"].get("STATIC_FINAL", {})
+    _log(
+        f"{name!r}: adaptive pruning evaluated -- Sharpe {final.get('annualized_sharpe', 0):.3f} "
+        f"vs static {static.get('annualized_sharpe', 0):.3f} (run_id={payload['run_id']})"
+    )
+    _send_telegram_document(
+        content=payload["report_html"],
+        filename=f"{store.sanitize_model_name(name)}_adaptive_pruning_report.html",
+        caption=(
+            f"{name} -- adaptive pruning (dynamic, cumulative evidence)\n"
+            f"Sharpe {final.get('annualized_sharpe', 0):.2f} vs static "
+            f"{static.get('annualized_sharpe', 0):.2f}\n"
+            f"CAGR {final.get('cagr', 0):.2%} | MaxDD {final.get('max_drawdown', 0):.2%}"
+        ),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = argv or []
-    names = args if args else DEFAULT_TREES
+    argv = sys.argv[1:] if argv is None else argv
+    parser = argparse.ArgumentParser()
+    parser.add_argument("trees", nargs="*", help="tree names (default: DEFAULT_TREES)")
+    parser.add_argument(
+        "--skip-pruning", action="store_true",
+        help="skip the per-tree pruning evaluation (report-only; leaves wall-clock unchanged)",
+    )
+    args = parser.parse_args(argv)
+    names = args.trees or DEFAULT_TREES
     _log(f"=== rolling vs expanding backtest job starting for {names!r} ===")
     for name in names:
         rolling = run_variant(name, expanding=False)
@@ -288,9 +355,11 @@ def main(argv: list[str] | None = None) -> int:
             f"expanding: wall={expanding['wall_clock_seconds']:.1f}s "
             f"folds={expanding['fold_count']}"
         )
+        if not args.skip_pruning and name in PRUNING_TREES:
+            _evaluate_and_send_adaptive_pruning(name)
     _log("=== job complete ===")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:] or None))
+    raise SystemExit(main())

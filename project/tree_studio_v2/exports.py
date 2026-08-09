@@ -753,7 +753,7 @@ def build_client_report(
         + _num(metrics.get("annualized_sharpe")) + "</td><td>"
         + _pct(metrics.get("max_drawdown")) + "</td></tr>"
         for arm, metrics in report.metrics.items()
-        if arm in {"B0", "B0_SYNTH", "FORWARD_FINAL", "FINAL"}
+        if ":" not in arm
     )
     settings_rows = _node_settings_html(config)
     node_rows = "".join(
@@ -807,7 +807,7 @@ details{{margin-top:16px;border:1px solid var(--line);padding:10px 14px}} summar
 <h2>Albero di allocazione</h2>{_tree_html(config)}
 <h2>Impostazioni dei nodi</h2><table><thead><tr><th>Nodo</th><th>Obiettivo</th><th>Rischio</th><th>Target vol ann.</th><th>Cap vol ann.</th><th>TEV ann.</th><th>Stima media</th><th>Limiti locali</th></tr></thead><tbody>{settings_rows}</tbody></table>
 <h2>Risultati walk-forward</h2><table><thead><tr><th>Strategia</th><th>CAGR</th><th>Vol</th><th>Sharpe</th><th>Max DD</th></tr></thead><tbody>{metric_rows}</tbody></table>
-{_curve_svg(report, ['B0','B0_SYNTH','FORWARD_FINAL','FINAL'])}
+{_curve_svg(report, [arm for arm in report.metrics if ':' not in arm])}
 <p class="note"><b>B0_SYNTH e diagnostico.</b> Mantiene i pesi strategici del benchmark sulle sleeve ottimizzate. Target-vol, cap e TEV usano sempre B0 raw.</p>
 <h2>Ultima decisione per nodo</h2><table><thead><tr><th>Nodo</th><th>Obiettivo</th><th>Rendimento atteso</th><th>Vol</th><th>TEV</th><th>Esito</th></tr></thead><tbody>{node_rows}</tbody></table>
 {node_value_comparison_html}
