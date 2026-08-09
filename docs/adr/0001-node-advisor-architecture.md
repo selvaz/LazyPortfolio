@@ -1,12 +1,12 @@
-# ADR 0001 — Node Copilot: confini di repository, trasporto e contratti producer-agnostic
+# ADR 0001 — Node Advisor: confini di repository, trasporto e contratti producer-agnostic
 
 **Stato**: accettata
 **Data**: 2026-08-09
-**Riferimento**: `docs/node-copilot-operational-plan.md` (piano finalizzato)
+**Riferimento**: `docs/node-advisor-operational-plan.md` (piano finalizzato)
 
 ## Contesto
 
-Il Node Copilot introduce un LLM che propone modifiche (inizialmente solo
+Il Node Advisor introduce un LLM che propone modifiche (inizialmente solo
 view Black-Litterman) a un nodo dell'albero gerarchico di LazyPortfolio.
 Prima di scrivere qualunque contratto o tabella serve fissare tre decisioni
 architetturali che altrimenti verrebbero prese implicitamente file per file,
@@ -19,7 +19,7 @@ controfattuale, revisioni) **non dipende** da `LazyBridge` né da `LazyTools`.
 Il composition root dell'agente (Plan/Agent LazyBridge, profili tool) vive
 nell'application layer sotto `project/` (Tree Studio) o in un futuro package
 applicativo separato, mai in `src/lazyportfolio/`. `LazyTools` espone i
-provider LLM-facing (`NodeCopilotReadTools`, refactor privilegi
+provider LLM-facing (`NodeAdvisorReadTools`, refactor privilegi
 `PortfolioTreeTools`) come proprio pacchetto, chiamando LazyPortfolio come
 libreria Python, non il contrario.
 
@@ -42,7 +42,7 @@ anticipato).
 
 ## Decisione 3 — Contratti producer-agnostic fin dall'MVP
 
-Il Node Copilot è il primo produttore di `ChangeProposal`, non l'unico
+Il Node Advisor è il primo produttore di `ChangeProposal`, non l'unico
 previsto: il futuro Investment Committee (`investment-process-top-down-etf.md`)
 deve poter produrre proposte sugli stessi nodi usando lo stesso contratto di
 validazione/snapshot/approvazione, senza un secondo sistema parallelo. Questo
@@ -51,21 +51,21 @@ impone, fin dalla Fase 0:
 1. `ChangeProposal.kind` è una stringa validata contro un registro di
    validator, non un `Literal` chiuso a un solo valore.
 2. Le proposte hanno un `batch_id` opzionale (nullable) che le raggruppa —
-   il Node Copilot conversazionale lo lascia `None`, un futuro producer
+   il Node Advisor conversazionale lo lascia `None`, un futuro producer
    batch (il committee) lo popola per raggruppare le proposte multi-nodo di
    una singola run.
 3. `ModelProvenance` distingue esplicitamente `producer_kind`
    (`"interactive_chat"` vs `"scheduled_batch"`) e `producer_id` libero.
-4. Il service layer (`NodeContextService`, `CopilotJobService`,
+4. Il service layer (`NodeContextService`, `AdvisorJobService`,
    `ProposalService`, introdotti in Fase 3) riceve l'identità del chiamante
    come parametro esplicito, mai da una sessione HTTP implicita — così resta
    richiamabile da un job schedulato (LazyPulse) tanto quanto da una
    richiesta REST.
 
 Motivazione: retrofittare questi campi dopo aver già scritto schema e
-validator del Node Copilot richiederebbe una migrazione di schema e la
+validator del Node Advisor richiederebbe una migrazione di schema e la
 riscrittura dei service layer; fissarli ora costa quattro campi/parametri in
-più, oggi inutilizzati dal solo Node Copilot ma già pronti per il secondo
+più, oggi inutilizzati dal solo Node Advisor ma già pronti per il secondo
 producer.
 
 ## Decisione 4 — Semantica del backtest, dichiarata esplicitamente

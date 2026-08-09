@@ -1,4 +1,4 @@
-"""docs/node-copilot-operational-plan.md §13 Fase 1 exit criteria for the
+"""docs/node-advisor-operational-plan.md §13 Fase 1 exit criteria for the
 approval transaction: happy path applies exactly one new revision; a stale
 base revision or a stale data snapshot both refuse (and expire) instead of
 silently applying; a retried idempotency_key returns the same result rather
@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from lazyportfolio.copilot.approval_service import (
+from lazyportfolio.advisor.approval_service import (
     ApprovalHashMismatch,
     ProposalExpired,
     ProposalNotFound,
@@ -21,7 +21,7 @@ from lazyportfolio.copilot.approval_service import (
     StaleRevisionError,
     apply_proposal,
 )
-from lazyportfolio.copilot.contracts import (
+from lazyportfolio.advisor.contracts import (
     ChangeProposal,
     CounterfactualResult,
     JsonPatchOperation,
@@ -30,9 +30,9 @@ from lazyportfolio.copilot.contracts import (
     SnapshotDescriptor,
     ValidationResult,
 )
-from lazyportfolio.copilot.proposal_repository import create as create_proposal
-from lazyportfolio.copilot.proposal_repository import get as get_proposal
-from lazyportfolio.copilot.repository import create_tree, get_head, save_revision
+from lazyportfolio.advisor.proposal_repository import create as create_proposal
+from lazyportfolio.advisor.proposal_repository import get as get_proposal
+from lazyportfolio.advisor.repository import create_tree, get_head, save_revision
 
 _NOW = datetime(2026, 8, 9, tzinfo=UTC)
 _FUTURE = datetime(2026, 12, 31, tzinfo=UTC)
@@ -108,7 +108,7 @@ def _pending_proposal(
         ],
         rationale="test",
         model_provenance=ModelProvenance(
-            producer_kind="interactive_chat", producer_id="node-copilot", model="test-model"
+            producer_kind="interactive_chat", producer_id="node-advisor", model="test-model"
         ),
         validation=ValidationResult(valid=True),
         counterfactual=CounterfactualResult(),
@@ -174,7 +174,7 @@ def test_proposal_not_pending_approval_raises(tmp_path: Path) -> None:
         patch=[],
         rationale="test",
         model_provenance=ModelProvenance(
-            producer_kind="interactive_chat", producer_id="node-copilot", model="test-model"
+            producer_kind="interactive_chat", producer_id="node-advisor", model="test-model"
         ),
         validation=ValidationResult(valid=True),
         counterfactual=CounterfactualResult(),

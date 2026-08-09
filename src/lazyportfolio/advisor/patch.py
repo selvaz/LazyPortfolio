@@ -1,4 +1,4 @@
-"""JSON Patch allowlist for the Node Copilot MVP (docs/node-copilot-operational-plan.md §11).
+"""JSON Patch allowlist for the Node Advisor MVP (docs/node-advisor-operational-plan.md §11).
 
 Security invariant: "the MVP patch may touch exactly one node and only
 ``constraints.views``". This module is where that invariant becomes code
@@ -9,7 +9,7 @@ client-supplied one.
 
 from __future__ import annotations
 
-from lazyportfolio.copilot.contracts import JsonPatchOperation
+from lazyportfolio.advisor.contracts import JsonPatchOperation
 
 
 class DisallowedPatchError(ValueError):

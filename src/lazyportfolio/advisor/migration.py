@@ -1,6 +1,6 @@
 """One-time, idempotent migration of legacy ``trees`` rows into revisions.
 
-docs/node-copilot-schema-migration-draft.md step 2: every legacy row (keyed
+docs/node-advisor-schema-migration-draft.md step 2: every legacy row (keyed
 by name, mutable in place) becomes a ``tree_id`` + one initial
 ``tree_revisions`` row + a ``legacy_tree_names`` mapping row. The legacy
 ``trees`` table itself is never modified or deleted from -- it remains the
@@ -15,7 +15,7 @@ from contextlib import closing
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from lazyportfolio.copilot.canonical import content_hash
+from lazyportfolio.advisor.canonical import content_hash
 from lazyportfolio.v2 import db as _db
 
 

@@ -1,4 +1,4 @@
-"""Shared SQLite persistence for Tree Studio and the Node Copilot domain.
+"""Shared SQLite persistence for Tree Studio and the Node Advisor domain.
 
 Saved tree configurations (:mod:`lazyportfolio.v2.store`) and run history/
 artifacts (:mod:`lazyportfolio.v2.run_history`) used to live in different
@@ -8,13 +8,13 @@ needs to survive a process restart, so they share one on-disk database and
 one connection helper instead of three copies of the "resolve path / create
 parent dir / open sqlite3 connection" boilerplate. Stdlib-only.
 
-The Node Copilot domain tables (revisions, conversations, jobs, proposals,
-approvals, outbox -- :mod:`lazyportfolio.copilot`) share the same file and
+The Node Advisor domain tables (revisions, conversations, jobs, proposals,
+approvals, outbox -- :mod:`lazyportfolio.advisor`) share the same file and
 connection helper, added purely additively (``CREATE TABLE IF NOT EXISTS``)
-in ``_COPILOT_SCHEMA`` below: ``trees``/``runs``/``run_artifacts`` and their
+in ``_ADVISOR_SCHEMA`` below: ``trees``/``runs``/``run_artifacts`` and their
 existing callers are untouched by this module
-(docs/node-copilot-operational-plan.md §5.1; see
-docs/node-copilot-schema-migration-draft.md for the migration this schema
+(docs/node-advisor-operational-plan.md §5.1; see
+docs/node-advisor-schema-migration-draft.md for the migration this schema
 supports).
 """
 
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS run_artifacts (
 CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id);
 """
 
-#: Node Copilot domain tables (docs/node-copilot-operational-plan.md §5.1).
+#: Node Advisor domain tables (docs/node-advisor-operational-plan.md §5.1).
 #: All ids are TEXT (str(uuid4()) at the Python layer) -- sqlite3 has no
 #: native UUID type, and this matches the existing TEXT-keyed convention
 #: (``trees.name``, ``runs.cache_key``) rather than introducing a second id
@@ -77,9 +77,9 @@ CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_id ON run_artifacts(run_id);
 #: module docstring) means every existing caller of
 #: ``list_saved_models``/``read_model``/``write_model`` needs zero review
 #: for this migration, at the cost of one extra table. See
-#: docs/node-copilot-schema-migration-draft.md for the reasoning and
-#: docs/node-copilot-operational-plan.md §5.1 for the synced invariant.
-_COPILOT_SCHEMA = """
+#: docs/node-advisor-schema-migration-draft.md for the reasoning and
+#: docs/node-advisor-operational-plan.md §5.1 for the synced invariant.
+_ADVISOR_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tree_revisions (
     revision_id TEXT PRIMARY KEY,
     tree_id TEXT NOT NULL,
@@ -215,11 +215,11 @@ def connect(db_path: str | os.PathLike[str] | None = None) -> sqlite3.Connection
     """Open a connection to the shared database, creating the schema if needed.
 
     Enables foreign key enforcement, WAL (so a long-running reader never
-    blocks a writer, needed once the copilot worker/job tables are in use),
+    blocks a writer, needed once the advisor worker/job tables are in use),
     and a busy timeout (retries on ``SQLITE_BUSY`` instead of raising
     immediately) -- required by the compare-and-swap writes
-    ``lazyportfolio.copilot``'s repositories rely on
-    (docs/node-copilot-operational-plan.md §11: "SQLite apre PRAGMA
+    ``lazyportfolio.advisor``'s repositories rely on
+    (docs/node-advisor-operational-plan.md §11: "SQLite apre PRAGMA
     foreign_keys=ON, WAL e busy timeout").
     """
     path = resolve_db_path(db_path)
@@ -229,7 +229,7 @@ def connect(db_path: str | os.PathLike[str] | None = None) -> sqlite3.Connection
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(_SCHEMA)
-    conn.executescript(_COPILOT_SCHEMA)
+    conn.executescript(_ADVISOR_SCHEMA)
     return conn
 
 

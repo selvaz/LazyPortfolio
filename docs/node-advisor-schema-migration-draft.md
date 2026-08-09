@@ -1,9 +1,9 @@
-# Node Copilot — draft di migrazione schema
+# Node Advisor — draft di migrazione schema
 
 **Stato**: implementato in Fase 1 (PR LP-02/LP-03) esattamente come
 descritto qui, incluso lo scostamento di `tree_heads` dalla bozza iniziale
 (vedi nota sotto).
-**Riferimento**: `docs/node-copilot-operational-plan.md` §5.
+**Riferimento**: `docs/node-advisor-operational-plan.md` §5.
 
 ## Tabelle nuove (additive, `CREATE TABLE IF NOT EXISTS`)
 

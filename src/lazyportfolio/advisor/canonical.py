@@ -1,4 +1,4 @@
-"""Canonical serialization and content hashing (docs/node-copilot-operational-plan.md §4.3).
+"""Canonical serialization and content hashing (docs/node-advisor-operational-plan.md §4.3).
 
 ``json.dumps(sort_keys=True)`` is not enough on its own: different producers
 can serialize the same float differently (``1.0`` vs ``1``, trailing zeros,

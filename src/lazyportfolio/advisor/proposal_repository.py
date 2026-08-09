@@ -4,7 +4,7 @@
 ``ChangeProposal`` payload (§4.3: "status non fa parte del payload
 immutabile"). A transition is a single ``UPDATE ... WHERE status = ?`` --
 the same compare-and-swap shape as
-:func:`lazyportfolio.copilot.repository.save_revision`, and for the same
+:func:`lazyportfolio.advisor.repository.save_revision`, and for the same
 reason: two concurrent transitions racing on the same proposal must not
 both succeed.
 """
@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from lazyportfolio.copilot.contracts import ChangeProposal, ProposalStatus
-from lazyportfolio.copilot.state_machine import validate_transition
+from lazyportfolio.advisor.contracts import ChangeProposal, ProposalStatus
+from lazyportfolio.advisor.state_machine import validate_transition
 from lazyportfolio.v2 import db as _db
 
 
@@ -106,7 +106,7 @@ def transition(
 ) -> None:
     """Move a proposal from ``from_status`` to ``to_status``, or raise.
 
-    Raises :class:`~lazyportfolio.copilot.state_machine.IllegalProposalTransition`
+    Raises :class:`~lazyportfolio.advisor.state_machine.IllegalProposalTransition`
     if the transition is not in §4.5's diagram (checked before touching the
     database), or :class:`ConcurrentProposalWrite` if the proposal's status
     had already moved away from ``from_status`` by the time this call's

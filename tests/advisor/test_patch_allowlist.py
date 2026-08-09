@@ -2,8 +2,8 @@ from typing import Literal
 
 import pytest
 
-from lazyportfolio.copilot.contracts import JsonPatchOperation
-from lazyportfolio.copilot.patch import DisallowedPatchError, validate_patch, views_patch_path
+from lazyportfolio.advisor.contracts import JsonPatchOperation
+from lazyportfolio.advisor.patch import DisallowedPatchError, validate_patch, views_patch_path
 
 
 def _replace_views(node_id: str) -> JsonPatchOperation:

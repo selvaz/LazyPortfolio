@@ -1,11 +1,11 @@
-"""Golden fixtures for the Node Copilot's Fase 0 contracts.
+"""Golden fixtures for the Node Advisor's Fase 0 contracts.
 
 Two V2 tree configurations, both in the plain-dict shape
 ``lazyportfolio.v2.model.V2Model.from_config`` already accepts (built from
 ``normalize_config``/``ticker`` conventions, not a new format):
 
 * :data:`MULTI_LEVEL_CONFIG` -- root -> two pillars -> leaves, with a
-  Black-Litterman view on the "equity" pillar (a Node Copilot conversation
+  Black-Litterman view on the "equity" pillar (a Node Advisor conversation
   on a nested node).
 * :data:`PILLAR_LEVEL_CONFIG` -- root -> four direct pillars
   (equity/bond/commodity/cash-equivalent), no views, matching the top-down
@@ -15,7 +15,7 @@ For each, a :func:`NodeContext` is built *manually* here (not through an
 automated resolver -- that is ``NodeUniverseResolver``, Fase 2) so Fase 0's
 tests can prove the contract's fields make sense against both tree shapes,
 in particular that a first-level pillar node has no different semantics
-than a deeper interior node (docs/adr/0001-node-copilot-architecture.md,
+than a deeper interior node (docs/adr/0001-node-advisor-architecture.md,
 Decision 3 / plan §3.4 point 5).
 """
 
@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from lazyportfolio.copilot.contracts import NodeComponent, NodeContext, SnapshotDescriptor
+from lazyportfolio.advisor.contracts import NodeComponent, NodeContext, SnapshotDescriptor
 
 #: Fixed, arbitrary UUIDs -- reproducible across test runs, not meaningful
 #: beyond "this is tree/revision X in this fixture module".
@@ -58,7 +58,7 @@ MULTI_LEVEL_CONFIG: dict[str, object] = {
                         "instruments": {"ticker:VTI": 1.0, "ticker:VXUS": -1.0},
                         "expected_return": 0.02,
                         "confidence": 0.6,
-                        "source": "node-copilot",
+                        "source": "node-advisor",
                     }
                 ]
             },
@@ -227,7 +227,7 @@ def multi_level_equity_node_context() -> NodeContext:
                 "instruments": {"ticker:VTI": 1.0, "ticker:VXUS": -1.0},
                 "expected_return": 0.02,
                 "confidence": 0.6,
-                "source": "node-copilot",
+                "source": "node-advisor",
             }
         ],
         snapshot=_snapshot(["ticker:VTI", "ticker:VXUS"]),

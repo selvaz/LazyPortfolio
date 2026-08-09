@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-from lazyportfolio.copilot.contracts import (
+from lazyportfolio.advisor.contracts import (
     ChangeProposal,
     CounterfactualResult,
     CoverageEntry,
@@ -113,7 +113,7 @@ def test_proposed_view_requires_at_least_one_instrument() -> None:
 
 
 def test_change_proposal_kind_is_an_open_string_not_a_closed_literal() -> None:
-    """docs/adr/0001-node-copilot-architecture.md Decision 3, point 1: a
+    """docs/adr/0001-node-advisor-architecture.md Decision 3, point 1: a
     second producer's kind must be accepted without a schema change here."""
 
     proposal = _minimal_proposal(kind="a_future_committee_kind_nobody_registered_yet")
@@ -134,7 +134,7 @@ def test_change_proposal_batch_id_defaults_to_none_and_accepts_a_value() -> None
 
 def test_model_provenance_distinguishes_producer_kind() -> None:
     interactive = ModelProvenance(
-        producer_kind="interactive_chat", producer_id="node-copilot", model="test-model"
+        producer_kind="interactive_chat", producer_id="node-advisor", model="test-model"
     )
     batch = ModelProvenance(
         producer_kind="scheduled_batch", producer_id="investment-committee", model="test-model"
@@ -176,7 +176,7 @@ def _minimal_proposal(
         proposed_views=[],
         rationale="test",
         model_provenance=ModelProvenance(
-            producer_kind="interactive_chat", producer_id="node-copilot", model="test-model"
+            producer_kind="interactive_chat", producer_id="node-advisor", model="test-model"
         ),
         validation=ValidationResult(valid=True),
         counterfactual=CounterfactualResult(),

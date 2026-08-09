@@ -1,4 +1,4 @@
-"""docs/node-copilot-operational-plan.md §13 Fase 1 exit criterion: the
+"""docs/node-advisor-operational-plan.md §13 Fase 1 exit criterion: the
 legacy trees table migrates into revisions without ever being modified
 itself, and a migrated tree's head config round-trips byte-equivalent to
 what lazyportfolio.v2.store.read_model already returned."""
@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lazyportfolio.copilot.migration import migrate_legacy_trees, tree_id_for_name
-from lazyportfolio.copilot.repository import get_head
+from lazyportfolio.advisor.migration import migrate_legacy_trees, tree_id_for_name
+from lazyportfolio.advisor.repository import get_head
 from lazyportfolio.v2.store import list_saved_models, read_model, write_model
 
 
