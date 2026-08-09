@@ -1,15 +1,15 @@
 # Node Copilot — draft di migrazione schema
 
-**Stato**: draft (Fase 0, nessuna tabella creata da questo documento — il
-codice reale è Fase 1, PR LP-02/LP-03).
+**Stato**: implementato in Fase 1 (PR LP-02/LP-03) esattamente come
+descritto qui, incluso lo scostamento di `tree_heads` dalla bozza iniziale
+(vedi nota sotto).
 **Riferimento**: `docs/node-copilot-operational-plan.md` §5.
 
 ## Tabelle nuove (additive, `CREATE TABLE IF NOT EXISTS`)
 
 Tutte vivono nello stesso file SQLite di `trees`/`runs`/`run_artifacts`
 (`lazyportfolio.v2.db`), con `PRAGMA foreign_keys=ON`, WAL e busy timeout
-abilitati su ogni connessione (già il caso in `db.connect()` per WAL/`ON
-CONFLICT`; `foreign_keys` va aggiunto in Fase 1).
+abilitati su ogni connessione (`db.connect()`).
 
 ```
 trees               (esistente, invariata: name TEXT PRIMARY KEY, config, created_at, updated_at)
@@ -17,6 +17,11 @@ trees               (esistente, invariata: name TEXT PRIMARY KEY, config, create
 tree_revisions      (revision_id UUID PK, tree_id UUID, parent_revision_id UUID NULL,
                       config_json TEXT, config_hash TEXT, created_at TEXT,
                       actor_type TEXT, actor_id TEXT, reason TEXT NULL)
+
+tree_heads          (tree_id UUID PK, head_revision_id UUID -> tree_revisions.revision_id)
+                      -- tabella nuova invece di una colonna aggiunta a `trees`: `trees`
+                      -- resta byte-per-byte invariata, zero revisione richiesta ai
+                      -- chiamanti esistenti di list_saved_models/read_model/write_model.
 
 legacy_tree_names   (tree_id UUID, name TEXT UNIQUE)  -- mapping riga-legacy -> tree_id
 
@@ -75,10 +80,12 @@ created_at)`, `idx_outbox_undelivered (delivered_at)` parziale su
 - foreign key `tree_revisions.tree_id -> trees` (via `legacy_tree_names` per
   compatibilità nome→id durante la transizione), `change_proposals.tree_id`,
   `agent_conversations.tree_id`;
-- `trees.head_revision_id` (colonna aggiunta a `trees` in Fase 1, non qui)
-  referenzia una revision dello stesso tree — verificato dal repository, non
-  dalla foreign key da sola (SQLite non supporta un check cross-column così
-  espressivo).
+- `tree_heads.head_revision_id` referenzia una revision dello stesso tree
+  (foreign key verso `tree_revisions.revision_id`); che sia la revision del
+  *proprio* `tree_id` e non di un altro è verificato dal repository
+  (`save_revision`'s CAS legge la head corrente per quello specifico
+  `tree_id` prima di scrivere), non dalla sola foreign key — SQLite non
+  supporta un check cross-column così espressivo.
 
 ## Passi di migrazione (§5.2)
 

@@ -312,8 +312,9 @@ Usare lo stesso file SQLite locale per semplicità operativa, ma con repository 
 
 Tabelle:
 
-- `trees(tree_id, name, head_revision_id, created_at, archived_at)`;
+- `trees` (esistente, **mai modificata**: `name TEXT PRIMARY KEY, config, created_at, updated_at` — vedi nota sotto);
 - `tree_revisions(revision_id, tree_id, parent_revision_id, config_json, config_hash, created_at, actor_type, actor_id, reason)`;
+- `tree_heads(tree_id, head_revision_id)` — la testa corrente di ogni tree, bersaglio del CAS; tabella nuova invece di una colonna `head_revision_id` aggiunta a `trees`, così `trees` resta byte-per-byte invariata e nessun chiamante esistente di `list_saved_models`/`read_model`/`write_model` richiede revisione (implementato in Fase 1, PR LP-02; vedi `docs/node-copilot-schema-migration-draft.md`);
 - `agent_conversations(conversation_id, tree_id, node_id, user_id, created_at, updated_at)`;
 - `agent_messages(message_id, conversation_id, role, content_json, revision_id, data_fingerprint, created_at)`;
 - `agent_jobs(job_id, conversation_id, request_message_id, kind, status, checkpoint_key, session_db_path, budget_json, started_at, heartbeat_at, finished_at, error_json)`;
@@ -329,7 +330,7 @@ Vincoli essenziali:
 - unique su `content_hash` solo se si vuole dedup esplicito, non come requisito globale;
 - unique su `proposal_approvals.proposal_id` e su `idempotency_key`;
 - foreign keys e check sugli status;
-- `head_revision_id` referenzia una revision dello stesso tree, verificato dal repository/service.
+- `tree_heads.head_revision_id` referenzia una revision dello stesso tree (foreign key verso `tree_revisions.revision_id`), verificato anche dal repository/service.
 
 ### 5.2 Migrazione senza rotture
 
@@ -516,12 +517,12 @@ Nella singola transazione:
 1. leggere proposta e status;
 2. verificare hash con confronto constant-time;
 3. verificare expiry;
-4. rileggere `trees.head_revision_id` e confrontarla con `base_revision_id`;
+4. rileggere `tree_heads.head_revision_id` e confrontarla con `base_revision_id`;
 5. ricostruire e validare la patch server-side;
-6. ricalcolare il fingerprint sul medesimo contratto di snapshot;
+6. ricalcolare il fingerprint sul medesimo contratto di snapshot (Fase 1: hook `recompute_fingerprint` con default che si fida del fingerprint salvato — un vero ricalcolo richiede il `SnapshotService` di Fase 2);
 7. applicare patch su una copia e validare `V2Model` completo;
 8. inserire nuova `tree_revision`;
-9. aggiornare head con CAS `WHERE head_revision_id = base_revision_id`;
+9. aggiornare `tree_heads` con CAS `WHERE tree_id = ? AND head_revision_id = base_revision_id`;
 10. inserire approval/result e outbox event;
 11. commit.
 
