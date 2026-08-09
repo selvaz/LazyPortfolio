@@ -124,3 +124,10 @@ chiamata, non un passo separato.
   (nuovo job kind `advisor_turn` accanto a `fixture_proposal`), non una
   riscrittura del service layer — la scelta architetturale ha retto al primo
   vero utilizzo end-to-end.
+- (Fase 6) Il secondo producer (`project/advisor/committee.py`) chiama
+  `services.create_proposal` esattamente come il Node Advisor, passando solo
+  `producer_kind="scheduled_batch"` e un `batch_id` condiviso — nessuna
+  branch su producer, nessuna modifica a `contracts.py`/`state_machine.py`.
+  È la verifica finale della Decisione 3: i quattro campi/parametri
+  aggiunti "oggi inutilizzati dal solo Node Advisor" nella motivazione
+  originale sono ora davvero usati da un secondo chiamante.
