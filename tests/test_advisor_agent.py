@@ -300,6 +300,24 @@ def test_propose_route_with_a_valid_view_creates_a_pending_proposal(
 
 
 # --------------------------------------------------------------------- #
+# Fase 5: the agent's Session redacts PII in addition to LazyBridge's
+# default secret redaction (docs/node-advisor-operational-plan.md §11).
+# --------------------------------------------------------------------- #
+def test_advisor_session_redacts_both_secrets_and_pii(advisor_agent_module) -> None:
+    session = advisor_agent_module._advisor_session()
+    payload = {
+        "message": "contact doctor.selva@gmail.com, token sk-abcdefghijklmnopqrstuvwxyz",
+        "nested": {"note": "call 555-123-4567"},
+    }
+
+    redacted = session._redact(payload)
+
+    assert "doctor.selva@gmail.com" not in redacted["message"]
+    assert "sk-abcdefghijklmnopqrstuvwxyz" not in redacted["message"]
+    assert "555-123-4567" not in redacted["nested"]["note"]
+
+
+# --------------------------------------------------------------------- #
 # Opt-in live smoke test -- a real LLM call, not mocked.
 # --------------------------------------------------------------------- #
 @pytest.mark.skipif(

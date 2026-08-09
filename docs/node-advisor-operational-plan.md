@@ -544,7 +544,7 @@ Se revision o dati sono cambiati, rispondere `409 Conflict` con codice `stale_re
 - `GET /api/trees/{tree_id}/nodes/{node_id}/advisor/context`;
 - `GET/POST /api/advisor/conversations`;
 - `GET /api/advisor/conversations/{id}/messages`;
-- `POST /api/advisor/conversations/{id}/messages` → crea job;
+- `POST /api/advisor/conversations/{id}/messages` → crea job; il corpo determina quale (`{"text": ...}` → job `advisor_turn`, LLM reale via `advisor.agent.run_advisor_turn`; `{"views": [...]}` → job `fixture_proposal`, deterministico senza LLM -- esattamente uno dei due, mai entrambi, mai nessuno; vedi `docs/node-advisor-runbook.md` §2);
 - `GET /api/advisor/jobs/{job_id}`;
 - `GET /api/advisor/jobs/{job_id}/events` → SSE;
 - `GET /api/advisor/proposals/{proposal_id}`;
@@ -791,6 +791,8 @@ Exit criteria:
 - injection test non amplia privilegi;
 - budget/timeout/costi sono visibili e auditati.
 
+**Nota di implementazione (Fase 5):** `project/advisor/agent.py`'s `run_advisor_turn` è stato scritto e testato in Fase 4 (PR LP/LT-09) come funzione standalone, ma non era ancora cablato nel worker/API live né nella UI di Tree Studio -- il worker registrava solo il job kind `fixture_proposal` (Fase 3) e la chat era ancora una textbox per JSON di view esplicite. Il cablaggio reale (nuovo job kind `advisor_turn`, routing API per forma del corpo `views` vs `text`, riscrittura della chat UI) è stato completato in Fase 5 dopo essere stato individuato durante il Deep Audit di Fase 5 -- vedi `docs/node-advisor-runbook.md` §2.
+
 ### Fase 5 — Reviewer, hardening ed eval (5–8 giorni)
 
 Deliverable:
@@ -806,6 +808,8 @@ Exit criteria:
 - tutti gli eval critici passano;
 - nessuna P0/P1 aperta;
 - audit ricostruisce domanda → evidenze → proposal hash → approval → revision → confirmation run.
+
+**Nota di implementazione:** il "confirmation run" descritto al §1 non è mai stato implementato in nessuna fase (0-5) -- `approval_service.apply_proposal` si ferma allo stato `applied`; gli stati `confirmation_pending`/`confirmed`/`confirmation_failed` esistono nel contratto e nella state machine (§4.5) ma non sono mai raggiunti. `tests/advisor/test_audit_reconstruction.py` ricostruisce la catena end-to-end fino ad `applied` (l'ultimo stato realmente raggiungibile), non oltre. Gap del piano originale, dichiarato in `docs/node-advisor-runbook.md` §5, da valutare per Fase 6 se ancora rilevante.
 
 ### Fase 6 — Estensioni successive (non MVP)
 

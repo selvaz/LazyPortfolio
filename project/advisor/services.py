@@ -100,9 +100,17 @@ def post_message_and_enqueue(
     content: dict[str, Any],
     *,
     caller_id: str,
+    job_kind: str = jobs.FIXTURE_PROPOSAL,
     db_path: str | os.PathLike[str] | None = None,
 ) -> tuple[conversations.Message, str]:
-    """Record a user message and enqueue the (MVP: fixture) job it triggers.
+    """Record a user message and enqueue the job it triggers.
+
+    ``job_kind`` selects which worker handler processes it --
+    ``jobs.FIXTURE_PROPOSAL`` (deterministic, no LLM, ``content`` carries
+    pre-supplied ``views``) or ``jobs.ADVISOR_TURN`` (real LLM call via
+    :func:`advisor.agent.run_advisor_turn`, ``content`` carries free-text
+    ``text``) -- this function itself is agnostic to the shape of
+    ``content``, it only routes.
 
     Returns ``(message, job_id)``. The HTTP layer responds with the job id
     immediately -- the actual proposal preparation runs on the worker
@@ -111,9 +119,7 @@ def post_message_and_enqueue(
 
     del caller_id  # recorded on the conversation itself, not per-message in the MVP
     message = conversations.add_message(conversation_id, "user", content, db_path=db_path)
-    job_id = jobs.enqueue_job(
-        conversation_id, message.message_id, jobs.FIXTURE_PROPOSAL, db_path=db_path
-    )
+    job_id = jobs.enqueue_job(conversation_id, message.message_id, job_kind, db_path=db_path)
     return message, job_id
 
 
@@ -235,6 +241,63 @@ def handle_fixture_proposal_job(
     )
 
 
+def handle_advisor_turn_job(
+    job: JobRecord,
+    *,
+    backend: OptimizationDataBackend | None = None,
+    db_path: str | os.PathLike[str] | None = None,
+) -> None:
+    """The Fase 4/5 job handler: reads the triggering message's free-text
+    content (``{"node_id": ..., "text": ...}``) and runs
+    :func:`advisor.agent.run_advisor_turn`. Registered against
+    ``advisor.jobs.ADVISOR_TURN`` by the worker's caller (Fase 5: wired
+    into ``project/tree_studio.py``'s live worker, not just exercised by
+    tests -- see docs/node-advisor-operational-plan.md §13 Fase 5).
+
+    Imports ``advisor.agent`` lazily (module-level would be a circular
+    import: ``advisor.agent`` itself imports ``advisor.services``).
+    """
+
+    from advisor import agent as advisor_agent
+
+    conversation = conversations.get_conversation(job.conversation_id, db_path=db_path)
+    if conversation is None:
+        raise ValueError(f"conversation {job.conversation_id!r} not found")
+    message = next(
+        (
+            m
+            for m in conversations.list_messages(job.conversation_id, db_path=db_path)
+            if m.message_id == job.request_message_id
+        ),
+        None,
+    )
+    if message is None:
+        raise ValueError(f"message {job.request_message_id!r} not found")
+    node_id = str(message.content["node_id"])
+    text = str(message.content["text"])
+
+    result = advisor_agent.run_advisor_turn(
+        conversation.tree_id,
+        node_id,
+        text,
+        caller_id=conversation.user_id,
+        backend=backend,
+        db_path=db_path,
+    )
+    proposal = result["proposal"]
+    conversations.add_message(
+        job.conversation_id,
+        "assistant",
+        {
+            "route": result["route"],
+            "message": result["message"],
+            "proposal_id": proposal["id"] if proposal else None,
+            "status": "pending_approval" if proposal else None,
+        },
+        db_path=db_path,
+    )
+
+
 # --------------------------------------------------------------------- #
 # Approval / rejection
 # --------------------------------------------------------------------- #
@@ -290,6 +353,7 @@ __all__ = [
     "create_proposal",
     "get_node_context",
     "get_proposal",
+    "handle_advisor_turn_job",
     "handle_fixture_proposal_job",
     "list_messages",
     "post_message_and_enqueue",
