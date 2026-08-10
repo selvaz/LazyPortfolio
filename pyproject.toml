@@ -19,6 +19,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Registers this repo's Tree Studio store as a Source
+# (lazyportfolio.dataspace_source) so a cross-repository workflow can check
+# every source's readiness together before it starts writing. The
+# distribution is `lazydataspace`, not `dataspace` -- that name belongs to an
+# unrelated project on PyPI. Optional on purpose: nothing else in the package
+# imports it, so the repo installs and runs standalone without it, and a test
+# enforces that.
+lazydataspace = ["lazydataspace>=0.1.0"]
 # Shared market data source for MarketDataHubOptimizationBackend. Optional:
 # lazyportfolio.backend imports it lazily inside load_returns(), so the
 # package stays installable/testable with any OptimizationDataBackend,
