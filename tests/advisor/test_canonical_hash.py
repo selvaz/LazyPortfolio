@@ -66,9 +66,9 @@ def test_two_different_producers_writing_the_same_content_hash_identically() -> 
         "node_id": "equity",
         "views": [{"confidence": 0.6, "expected_return": 0.02}],
     }
-    committee_payload = {
+    batch_producer_payload = {
         "views": [{"expected_return": 0.02, "confidence": 0.6}],
         "node_id": "equity",
         "kind": "replace_node_views",
     }
-    assert content_hash(node_advisor_payload) == content_hash(committee_payload)
+    assert content_hash(node_advisor_payload) == content_hash(batch_producer_payload)

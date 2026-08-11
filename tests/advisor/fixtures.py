@@ -9,7 +9,7 @@ Two V2 tree configurations, both in the plain-dict shape
   on a nested node).
 * :data:`PILLAR_LEVEL_CONFIG` -- root -> four direct pillars
   (equity/bond/commodity/cash-equivalent), no views, matching the top-down
-  ETF committee's granularity (``investment-process-top-down-etf.md``).
+  ETF batch producer's granularity (``private workflow specification``).
 
 For each, a :func:`NodeContext` is built *manually* here (not through an
 automated resolver -- that is ``NodeUniverseResolver``, Fase 2) so Fase 0's
@@ -100,7 +100,7 @@ MULTI_LEVEL_CONFIG: dict[str, object] = {
 }
 
 #: Root -> four direct pillars, no grandchildren -- coherent with the
-#: top-down ETF committee's asset-class granularity. "cash" is represented
+#: top-down ETF batch producer's asset-class granularity. "cash" is represented
 #: as a short-duration T-Bill ETF, not the special ``cash:rf``/``cash:borrow``
 #: financing labels (those are a different, node-local financing axis --
 #: see lazyportfolio.v2.validation._is_financing_view_label).

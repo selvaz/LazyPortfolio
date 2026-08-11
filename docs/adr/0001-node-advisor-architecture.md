@@ -27,7 +27,7 @@ Motivazione: LazyPortfolio deve restare utilizzabile (e testabile) senza
 alcuna dipendenza LLM — è il motore quantitativo, non l'agente. Invertire la
 dipendenza renderebbe impossibile usare LazyPortfolio in un contesto
 batch/non conversazionale (esattamente il caso d'uso del futuro Investment
-Committee, vedi Decisione 3).
+Batch producer, vedi Decisione 3).
 
 ## Decisione 2 — Trasporto HTTP/SSE minimale, non un framework nuovo subito
 
@@ -43,7 +43,7 @@ anticipato).
 ## Decisione 3 — Contratti producer-agnostic fin dall'MVP
 
 Il Node Advisor è il primo produttore di `ChangeProposal`, non l'unico
-previsto: il futuro Investment Committee (`investment-process-top-down-etf.md`)
+previsto: il futuro scheduled batch workflow (`private workflow specification`)
 deve poter produrre proposte sugli stessi nodi usando lo stesso contratto di
 validazione/snapshot/approvazione, senza un secondo sistema parallelo. Questo
 impone, fin dalla Fase 0:
@@ -52,7 +52,7 @@ impone, fin dalla Fase 0:
    validator, non un `Literal` chiuso a un solo valore.
 2. Le proposte hanno un `batch_id` opzionale (nullable) che le raggruppa —
    il Node Advisor conversazionale lo lascia `None`, un futuro producer
-   batch (il committee) lo popola per raggruppare le proposte multi-nodo di
+   batch (il batch producer) lo popola per raggruppare le proposte multi-nodo di
    una singola run.
 3. `ModelProvenance` distingue esplicitamente `producer_kind`
    (`"interactive_chat"` vs `"scheduled_batch"`) e `producer_id` libero.
@@ -124,7 +124,7 @@ chiamata, non un passo separato.
   (nuovo job kind `advisor_turn` accanto a `fixture_proposal`), non una
   riscrittura del service layer — la scelta architetturale ha retto al primo
   vero utilizzo end-to-end.
-- (Fase 6) Il secondo producer (`project/advisor/committee.py`) chiama
+- (Fase 6) Il secondo producer (`project/advisor/batch_producer.py`) chiama
   `services.create_proposal` esattamente come il Node Advisor, passando solo
   `producer_kind="scheduled_batch"` e un `batch_id` condiviso — nessuna
   branch su producer, nessuna modifica a `contracts.py`/`state_machine.py`.

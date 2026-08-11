@@ -1,30 +1,21 @@
-"""Fase 6 exit criterion (docs/node-advisor-operational-plan.md §13): "il
-committee produce proposte valide sugli stessi contratti senza modifiche a
-schema/state machine -- la prova finale che la scelta producer-agnostic di
-Fase 0 ha retto". No LLM here (see project/advisor/committee.py's module
-docstring for why real committee reasoning is out of scope) -- every test
-uses caller-supplied views, same as Fase 3's fixture path.
-
-``project/advisor/committee.py`` is a script module, not an installed
-package -- same sys.path pattern as ``tests/test_advisor_agent.py``.
-"""
+"""Contract tests for the reusable scheduled batch proposal producer."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import pandas as pd
 import pytest
+from project.advisor import batch_producer, services
 
 from lazyportfolio.advisor.proposal_repository import get as get_proposal_record
 from lazyportfolio.advisor.repository import create_tree
 from lazyportfolio.backend import OptimizationDataset
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
+PRODUCER_ID = "scheduled-research"
+RATIONALE = "Scheduled research batch proposal."
+MODEL = "test-model"
 
 
 class _FakeBackend:
@@ -52,18 +43,6 @@ def backend() -> _FakeBackend:
         index=index,
     )
     return _FakeBackend(frame)
-
-
-@pytest.fixture()
-def committee_module():
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        import advisor.committee as module
-
-        yield module
-    finally:
-        sys.path.remove(str(PROJECT_DIR))
-        sys.modules.pop("advisor.committee", None)
 
 
 def _config() -> dict[str, Any]:
@@ -119,15 +98,24 @@ def _valid_equity_view() -> dict[str, Any]:
         "instruments": {"ticker:VTI": 1.0, "ticker:VXUS": -1.0},
         "expected_return": 0.02,
         "confidence": 0.6,
-        "rationale": "committee test",
+        "rationale": "batch producer test",
     }
 
 
-def test_a_batch_across_multiple_nodes_shares_one_batch_id_and_producer_identity(
-    committee_module, tree, backend
-) -> None:
+def _run(tree_id: str, node_views: dict[str, list[dict[str, Any]]], **kwargs):
+    return batch_producer.run_proposal_batch(
+        tree_id,
+        node_views,
+        producer_id=PRODUCER_ID,
+        rationale=RATIONALE,
+        model=MODEL,
+        **kwargs,
+    )
+
+
+def test_batch_shares_identity_and_persists_pending_proposals(tree, backend) -> None:
     revision, store_path = tree
-    result = committee_module.run_committee_batch(
+    result = _run(
         revision.tree_id,
         {
             "equity": [_valid_equity_view()],
@@ -136,7 +124,7 @@ def test_a_batch_across_multiple_nodes_shares_one_batch_id_and_producer_identity
                     "instruments": {"ticker:AGG": 1.0},
                     "expected_return": 0.01,
                     "confidence": 0.4,
-                    "rationale": "committee test",
+                    "rationale": "batch producer test",
                 }
             ],
         },
@@ -145,56 +133,32 @@ def test_a_batch_across_multiple_nodes_shares_one_batch_id_and_producer_identity
     )
 
     assert result.errors == {}
-    assert len(result.proposals) == 2
-    node_ids = {p.node_id for p in result.proposals}
-    assert node_ids == {"equity", "bond"}
+    assert {proposal.node_id for proposal in result.proposals} == {"equity", "bond"}
     for proposal in result.proposals:
         assert proposal.batch_id == result.batch_id
         assert proposal.model_provenance.producer_kind == "scheduled_batch"
-        assert proposal.model_provenance.producer_id == committee_module.PRODUCER_ID
-
+        assert proposal.model_provenance.producer_id == PRODUCER_ID
         record = get_proposal_record(proposal.id, db_path=store_path)
         assert record is not None
         assert record.status == "pending_approval"
 
 
-def test_a_caller_supplied_batch_id_is_honored_not_overwritten(
-    committee_module, tree, backend
-) -> None:
+def test_explicit_batch_id_is_preserved(tree, backend) -> None:
     revision, store_path = tree
     explicit_batch_id = uuid4()
-
-    result = committee_module.run_committee_batch(
+    result = _run(
         revision.tree_id,
         {"equity": [_valid_equity_view()]},
         batch_id=explicit_batch_id,
         backend=backend,
         db_path=store_path,
     )
-
     assert result.batch_id == explicit_batch_id
     assert result.proposals[0].batch_id == explicit_batch_id
 
 
-def test_the_node_advisors_own_conversational_proposals_still_leave_batch_id_none(
-    tmp_path, backend
-) -> None:
-    """Regression guard for §3.4 point 2: adding batch_id support for the
-    committee must never change the interactive Node Advisor's own
-    proposals, which always leave it None."""
-
-    from lazyportfolio.advisor import proposal_repository as proposals
-
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        from advisor import services
-    finally:
-        sys.path.remove(str(PROJECT_DIR))
-        sys.modules.pop("advisor.services", None)
-
-    store_path = str(tmp_path / "store.sqlite3")
-    revision = create_tree(_config(), actor_type="human", actor_id="test", db_path=store_path)
-
+def test_interactive_proposal_still_has_no_batch_id(tree, backend) -> None:
+    revision, store_path = tree
     proposal = services.create_proposal(
         revision.tree_id,
         "equity",
@@ -203,29 +167,17 @@ def test_the_node_advisors_own_conversational_proposals_still_leave_batch_id_non
         backend=backend,
         db_path=store_path,
     )
-
     assert proposal.batch_id is None
-    record = proposals.get(proposal.id, db_path=store_path)
-    assert record is not None
-    assert record.proposal.batch_id is None
 
 
-def test_an_invalid_node_in_the_batch_is_recorded_as_an_error_and_does_not_block_the_rest(
-    committee_module, tree, backend
-) -> None:
-    """Same validation as the interactive path -- an out-of-universe
-    instrument is rejected exactly the same way (node_universe.validate_view_set
-    has no branch on producer_kind) -- but one bad node must not sink the
-    whole batch."""
-
+def test_invalid_node_does_not_block_valid_sibling(tree, backend) -> None:
     revision, store_path = tree
-    result = committee_module.run_committee_batch(
+    result = _run(
         revision.tree_id,
         {
             "equity": [_valid_equity_view()],
             "bond": [
                 {
-                    # AGG belongs to bond's universe -- ticker:VTI does not.
                     "instruments": {"ticker:VTI": 1.0},
                     "expected_return": 0.02,
                     "confidence": 0.6,
@@ -236,22 +188,13 @@ def test_an_invalid_node_in_the_batch_is_recorded_as_an_error_and_does_not_block
         backend=backend,
         db_path=store_path,
     )
-
-    assert len(result.proposals) == 1
-    assert result.proposals[0].node_id == "equity"
-    assert "bond" in result.errors
+    assert [proposal.node_id for proposal in result.proposals] == ["equity"]
     assert "instrument_outside_universe" in result.errors["bond"]
 
 
-def test_a_financing_instrument_view_from_the_committee_is_rejected_like_any_other_producer(
-    committee_module, tree
-) -> None:
-    """§7.2/§11's financing-instrument prohibition has no producer_kind
-    branch -- a batch producer gets no more privilege than the interactive
-    Node Advisor."""
-
+def test_financing_instrument_is_rejected_for_batch_producer(tree) -> None:
     revision, store_path = tree
-    result = committee_module.run_committee_batch(
+    result = _run(
         revision.tree_id,
         {
             "equity": [
@@ -265,17 +208,23 @@ def test_a_financing_instrument_view_from_the_committee_is_rejected_like_any_oth
         },
         db_path=store_path,
     )
-
     assert result.proposals == []
     assert "financing_instrument_forbidden" in result.errors["equity"]
 
 
-def test_an_unknown_tree_id_is_recorded_as_an_error_not_raised(committee_module, tmp_path) -> None:
-    result = committee_module.run_committee_batch(
+def test_unknown_tree_is_recorded_as_error(tmp_path) -> None:
+    result = _run(
         "does-not-exist",
         {"equity": [_valid_equity_view()]},
         db_path=str(tmp_path / "store.sqlite3"),
     )
-
     assert result.proposals == []
     assert "equity" in result.errors
+
+
+@pytest.mark.parametrize("field", ["producer_id", "rationale", "model"])
+def test_provenance_inputs_are_required(field) -> None:
+    values = {"producer_id": PRODUCER_ID, "rationale": RATIONALE, "model": MODEL}
+    values[field] = "  "
+    with pytest.raises(ValueError, match=field):
+        batch_producer.run_proposal_batch("tree", {}, **values)

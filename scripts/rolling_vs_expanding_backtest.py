@@ -50,19 +50,14 @@ from __future__ import annotations
 
 import argparse
 import html
-import sys
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Protocol
 
-ROOT = Path(__file__).resolve().parent.parent
+from project import tree_studio
 
-
-from project import tree_studio  # noqa: E402  (reuses _run_full_backtest/_v2_export_artifacts)
-
-from lazyportfolio.v2 import run_history, store  # noqa: E402
-from scripts.adaptive_pruning_backtest import evaluate_adaptive_pruning  # noqa: E402
+from lazyportfolio.v2 import run_history, store
+from scripts.adaptive_pruning_backtest import evaluate_adaptive_pruning
 
 
 def _log(message: str) -> None:
@@ -342,8 +337,9 @@ def _evaluate_and_send_adaptive_pruning(name: str, *, max_workers: int,
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI contract without making any runtime decision."""
+
     parser = argparse.ArgumentParser(
         description="Rolling versus expanding walk-forward back-test, with an "
                     "optional adaptive-pruning evaluation per tree.")
@@ -378,22 +374,35 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-pruning", action="store_true",
         help="skip the per-tree pruning evaluation (report-only; leaves wall-clock unchanged)",
     )
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.telegram is None:
         parser.error("choose --telegram or --no-telegram; sending is not a default")
     if args.max_workers <= 0:
         parser.error("--max-workers must be positive")
-    # Decided once, here. Below this line nothing consults a flag, so nothing
-    # can send by forgetting to.
-    send: SendDocument = _send_telegram_document if args.telegram else _no_send
-    names = args.trees
-    unknown = [t for t in args.pruning_trees if t not in names]
+    unknown = [tree for tree in args.pruning_trees if tree not in args.trees]
     if unknown:
         parser.error(
             f"--pruning-tree names {unknown}, which are not among --tree; a tree "
             f"cannot be pruned in a run that does not back-test it")
-    _log(f"=== rolling vs expanding backtest job starting for {names!r} ===")
-    for name in names:
+    return args
+
+
+def select_sender(telegram: bool) -> SendDocument:
+    """Resolve notification policy once, before the backtest starts."""
+
+    return _send_telegram_document if telegram else _no_send
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    send = select_sender(args.telegram)
+    _log(f"=== rolling vs expanding backtest job starting for {args.trees!r} ===")
+    for name in args.trees:
         rolling = run_variant(name, expanding=False, max_workers=args.max_workers,
                               send=send)
         expanding = run_variant(name, expanding=True, max_workers=args.max_workers,

@@ -61,14 +61,14 @@ outbox_events       (event_id UUID PK, aggregate_type TEXT, aggregate_id UUID,
 Note sulle colonne denormalizzate su `change_proposals` (`kind`,
 `producer_kind`, `producer_id`, oltre a `batch_id`): duplicano campi già
 presenti in `payload_json` (il `ChangeProposal` serializzato) per permettere
-filtri/indici SQL diretti (es. "tutte le proposte pending del committee")
+filtri/indici SQL diretti (es. "tutte le proposte pending del batch producer")
 senza deserializzare JSON riga per riga. `payload_json` resta la fonte di
 verità; le colonne denormalizzate sono una cache di lettura scritta nella
 stessa transazione, mai aggiornate indipendentemente.
 
 Indici minimi: `idx_change_proposals_tree_status (tree_id, status)`,
 `idx_change_proposals_batch (batch_id)` (nullable, per raggruppare le run
-del committee), `idx_agent_messages_conversation (conversation_id,
+del batch producer), `idx_agent_messages_conversation (conversation_id,
 created_at)`, `idx_outbox_undelivered (delivered_at)` parziale su
 `delivered_at IS NULL` se il dialetto SQLite in uso lo supporta.
 

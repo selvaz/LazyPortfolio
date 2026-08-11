@@ -5,7 +5,7 @@ caller's identity as an explicit parameter (``caller_id``/``approved_by``/
 ``user_id``), never read from an implicit request-scoped global --
 docs/adr/0001-node-advisor-architecture.md Decision 3 point 4, so this same
 layer stays callable from a future scheduled job (Fase 6's Investment
-Committee) as well as an HTTP request.
+Batch producer) as well as an HTTP request.
 
 ``create_proposal`` is the whole "proposal preparation" pipeline, shared by
 Fase 3's fixture job handler and Fase 4's LLM-driven
@@ -146,7 +146,7 @@ def create_proposal(
     (default ``producer_id="fixture"``), Fase 4's LLM-driven
     :func:`advisor.agent.run_advisor_turn` (real model name,
     ``producer_id="node-advisor-agent"``), and Fase 6's
-    :func:`advisor.committee.run_committee_batch` (``producer_kind=
+    :func:`advisor.batch_producer.run_proposal_batch` (``producer_kind=
     "scheduled_batch"``, a shared ``batch_id`` across one run's proposals)
     -- the exact producer-agnostic reuse docs/adr/0001-node-advisor-architecture.md
     Decision 3 was written to make possible: this function has no branch on
