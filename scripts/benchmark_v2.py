@@ -20,22 +20,19 @@ import sys
 import time
 import tracemalloc
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
-
 from project import (
-    tree_studio,  # noqa: E402  (reuses _v2_inputs/_config_hash/_data_fingerprint/_config_instruments)
+    tree_studio,
 )
 
-from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns  # noqa: E402
-from lazyportfolio.hierarchical_v2 import (  # noqa: E402
+from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns
+from lazyportfolio.hierarchical_v2 import (
     HierarchicalV2Backtester,
     HierarchicalV2Estimator,
     V2OptimizationError,
 )
-from lazyportfolio.v2 import run_history, store  # noqa: E402
+from lazyportfolio.v2 import run_history, store
 
 #: Small / medium / large real trees + the Black-Litterman views fixture.
 #: "Global Multi-Asset" (13 nodes) is a real saved tree, not synthetic.

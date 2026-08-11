@@ -82,7 +82,7 @@ def content_hash(value: Any) -> str:
 
     Same content hashes identically regardless of producer, key insertion
     order, or which library serialized it first -- the invariant a
-    ``ChangeProposal.content_hash`` (and its future committee-produced
+    ``ChangeProposal.content_hash`` (including content from batch producers)
     siblings) depends on.
     """
 

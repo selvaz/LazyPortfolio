@@ -38,7 +38,7 @@ ProposalStatus = Literal[
 ]
 
 #: §3.4 point 3 -- who produced a proposal: a human conversation (the Node
-#: Advisor MVP), or a scheduled batch job (the future Investment Committee).
+#: Advisor MVP), or a scheduled batch job (the future scheduled batch workflow).
 ProducerKind = Literal["interactive_chat", "scheduled_batch"]
 
 #: Mirrors lazyportfolio.v2.contracts.Mode without importing it: the advisor
@@ -129,7 +129,7 @@ class NodeContext(_PortfolioModel):
 
 class ModelProvenance(_PortfolioModel):
     """§3.4 point 3 / §4.3 -- distinguishes an interactive Node Advisor
-    conversation from a scheduled batch producer (the future committee)."""
+    conversation from a scheduled batch producer."""
 
     producer_kind: ProducerKind
     producer_id: str
@@ -211,7 +211,7 @@ class ChangeProposal(_PortfolioModel):
     ``kind`` is a plain string, not a closed ``Literal``, because it is
     validated at runtime against a validator registry (§3.4 point 1): the
     MVP registers only ``"replace_node_views"``, and the type must not
-    change when a second kind (e.g. a future committee producer) is added.
+    change when another producer kind is added.
     ``batch_id`` is nullable and groups proposals from the same producer
     run (§3.4 point 2); the Node Advisor's own conversational flow always
     leaves it ``None``.

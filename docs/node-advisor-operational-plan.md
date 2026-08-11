@@ -1,9 +1,9 @@
 # Node Advisor per Tree Studio — valutazione architetturale e piano operativo
 
-**Stato:** finale, approvato per implementazione  
-**Data di analisi:** 2026-08-09  
-**Ambito iniziale:** proposte Black–Litterman `replace_node_views`  
-**Ambito strategico:** primo incremento concreto del più ampio *Investment Committee* (`investment-process-top-down-etf.md`, root del workspace); i contratti definiti qui (proposta, snapshot, validazione, approvazione) devono restare **producer-agnostic** fin dall'MVP, in modo che il committee possa in seguito propagare le proprie view sugli stessi nodi senza un secondo sistema — vedi §3.4.  
+**Stato:** finale, approvato per implementazione
+**Data di analisi:** 2026-08-09
+**Ambito iniziale:** proposte Black–Litterman `replace_node_views`
+**Ambito strategico:** primo incremento concreto del più ampio *scheduled batch workflow* (`private workflow specification`, root del workspace); i contratti definiti qui (proposta, snapshot, validazione, approvazione) devono restare **producer-agnostic** fin dall'MVP, in modo che il batch producer possa in seguito propagare le proprie view sugli stessi nodi senza un secondo sistema — vedi §3.4.
 **Principio non negoziabile:** l'LLM ricerca e formula ipotesi; LazyPortfolio valida e calcola; solo un comando umano, vincolato a una proposta immutabile, può creare una nuova revisione del tree.
 
 ## 1. Decisione esecutiva
@@ -149,20 +149,20 @@ tree_id + node_id + user_id
 
 `revision_id` e `data_fingerprint` appartengono al contesto di un singolo messaggio/job/proposta, non all'identità della conversazione. Se fossero parte dell'identità, ogni salvataggio spezzerebbe artificialmente la chat. Ogni messaggio assistant registra invece la revisione e lo snapshot effettivamente consultati.
 
-Per installazione locale single-user, `user_id` può essere un valore stabile `local-user`, ma resta nel contratto per non rendere impossibile una futura modalità multiutente. Un job schedulato (es. una run giornaliera del committee) usa allo stesso modo un `user_id` stabile di tipo servizio (es. `committee-scheduler`), non una sessione umana — vedi §3.4.
+Per installazione locale single-user, `user_id` può essere un valore stabile `local-user`, ma resta nel contratto per non rendere impossibile una futura modalità multiutente. Un job schedulato (es. una run giornaliera del batch producer) usa allo stesso modo un `user_id` stabile di tipo servizio (es. `batch producer-scheduler`), non una sessione umana — vedi §3.4.
 
-### 3.4 Producer-agnostic contracts (predisposizione per l'Investment Committee)
+### 3.4 Producer-agnostic contracts (predisposizione per il workflow batch schedulato)
 
-Il Node Advisor è il primo produttore di `ChangeProposal`, non l'unico previsto. Il futuro Investment Committee (processo giornaliero, portfolio-wide, descritto in `investment-process-top-down-etf.md`) dovrà produrre proposte sugli stessi nodi usando lo stesso contratto di validazione/snapshot/approvazione, senza un secondo sistema parallelo. Questo impone quattro vincoli, tutti a costo marginale nullo se fissati ora e costosi da retrofittare dopo:
+Il Node Advisor è il primo produttore di `ChangeProposal`, non l'unico previsto. Il futuro scheduled batch workflow (processo giornaliero, portfolio-wide, descritto in `private workflow specification`) dovrà produrre proposte sugli stessi nodi usando lo stesso contratto di validazione/snapshot/approvazione, senza un secondo sistema parallelo. Questo impone quattro vincoli, tutti a costo marginale nullo se fissati ora e costosi da retrofittare dopo:
 
-1. **`ChangeProposal.kind` è una stringa validata contro un registro di validator, non un `Literal` chiuso.** L'MVP registra un solo validator (`replace_node_views`); aggiungere in futuro un `kind` per proposte del committee (es. `committee_tilt_proposal`) è una nuova voce nel registro, non una migrazione di schema o un cambio del tipo di colonna.
-2. **Le proposte hanno un `batch_id` opzionale (nullable) che le raggruppa.** Il Node Advisor conversazionale genera tipicamente proposte con `batch_id = NULL` (un nodo, una richiesta umana). Il committee genera in una singola run più proposte correlate su nodi diversi (es. un pillar equity e un pillar bond nello stesso giro decisionale): `batch_id` le lega senza forzare un apply atomico multi-nodo, che resta fuori scope MVP. La UI di approvazione può mostrare "queste N proposte appartengono alla stessa run" già dalla Fase 1, anche se il primo produttore reale del campo arriva solo con il committee.
-3. **`ModelProvenance` distingue esplicitamente il tipo di produttore** (`producer_kind: Literal["interactive_chat", "scheduled_batch"]`, più `producer_id` libero, es. `node-advisor` o `investment-committee`). Non è solo un campo di audit: la UI e le policy di budget (§9.3) possono trattare diversamente una proposta nata da una conversazione umana e una nata da un job notturno, senza dover ispezionare l'origine per euristica.
+1. **`ChangeProposal.kind` è una stringa validata contro un registro di validator, non un `Literal` chiuso.** L'MVP registra un solo validator (`replace_node_views`); aggiungere in futuro un `kind` per proposte del batch producer (es. `batch producer_tilt_proposal`) è una nuova voce nel registro, non una migrazione di schema o un cambio del tipo di colonna.
+2. **Le proposte hanno un `batch_id` opzionale (nullable) che le raggruppa.** Il Node Advisor conversazionale genera tipicamente proposte con `batch_id = NULL` (un nodo, una richiesta umana). Il batch producer genera in una singola run più proposte correlate su nodi diversi (es. un pillar equity e un pillar bond nello stesso giro decisionale): `batch_id` le lega senza forzare un apply atomico multi-nodo, che resta fuori scope MVP. La UI di approvazione può mostrare "queste N proposte appartengono alla stessa run" già dalla Fase 1, anche se il primo produttore reale del campo arriva solo con il batch producer.
+3. **`ModelProvenance` distingue esplicitamente il tipo di produttore** (`producer_kind: Literal["interactive_chat", "scheduled_batch"]`, più `producer_id` libero, es. `node-advisor` o `scheduled-research`). Non è solo un campo di audit: la UI e le policy di budget (§9.3) possono trattare diversamente una proposta nata da una conversazione umana e una nata da un job notturno, senza dover ispezionare l'origine per euristica.
 4. **Il service layer (`NodeContextService`, `AdvisorJobService`, `ProposalService`) non deve assumere una richiesta HTTP con utente davanti.** Va scritto come funzioni/servizi richiamabili sia da un handler REST sia da un job schedulato (es. da LazyPulse), con l'identità del chiamante passata esplicitamente come parametro — mai letta da un contesto di sessione web implicito. Questo è un vincolo di dependency injection nella Fase 3, non un problema di calcolo.
 
-Un quinto punto è di verifica, non di contratto: la Fase 0 deve includere una golden fixture con un nodo "pillar" (es. equity/bond/commodity a livello root, coerente con `investment-process-top-down-etf.md`) oltre alle fixture multi-livello già previste, per confermare che `NodeUniverseResolver` e `NodeContext` funzionano identicamente a quel livello di albero. Se emergono differenze semantiche, è meglio scoprirle qui che alla Fase 4.
+Un quinto punto è di verifica, non di contratto: la Fase 0 deve includere una golden fixture con un nodo "pillar" (es. equity/bond/commodity a livello root, coerente con `private workflow specification`) oltre alle fixture multi-livello già previste, per confermare che `NodeUniverseResolver` e `NodeContext` funzionano identicamente a quel livello di albero. Se emergono differenze semantiche, è meglio scoprirle qui che alla Fase 4.
 
-Questi vincoli non allargano lo scope MVP: `replace_node_views`, un solo nodo per proposta, nessun LLM nel primo incremento restano invariati. Rendono solo aperti, invece che impliciti, i punti che il committee toccherà per primi.
+Questi vincoli non allargano lo scope MVP: `replace_node_views`, un solo nodo per proposta, nessun LLM nel primo incremento restano invariati. Rendono solo aperti, invece che impliciti, i punti che il batch producer toccherà per primi.
 
 ## 4. Contratti canonici
 
@@ -232,7 +232,7 @@ Campi minimi aggiuntivi rispetto alla bozza iniziale:
 ```python
 class ModelProvenance(BaseModel):
     producer_kind: Literal["interactive_chat", "scheduled_batch"]
-    producer_id: str  # es. "node-advisor", "investment-committee"
+    producer_id: str  # es. "node-advisor", "scheduled-research"
     model: str
     model_version: str | None = None
     prompt_version: str | None = None
@@ -699,7 +699,7 @@ Deliverable:
 - ADR su confini repository e scelta HTTP/SSE;
 - Pydantic model v1 per NodeContext, Snapshot, Proposal (incl. `kind` come registro di validator e `ModelProvenance.producer_kind`), Evidence, Validation e Counterfactual;
 - state machine e JSON Patch allowlist;
-- golden fixtures per tree multi-livello, view BL e un nodo pillar-level (§3.4, punto 5) per la compatibilità futura con l'Investment Committee;
+- golden fixtures per tree multi-livello, view BL e un nodo pillar-level (§3.4, punto 5) per la compatibilità futura con il workflow batch schedulato;
 - schema migration draft e backup/rollback procedure, incl. le colonne `batch_id`/`kind`/`producer_kind`/`producer_id` di `change_proposals`.
 
 Exit criteria:
@@ -813,7 +813,7 @@ Exit criteria:
 
 ### Fase 6 — Estensioni successive (non MVP)
 
-- **Investment Committee come secondo producer** di `ChangeProposal` -- l'obiettivo strategico dichiarato all'avvio di questo progetto (§1: "primo incremento concreto del più ampio Investment Committee");
+- **scheduled batch workflow come secondo producer** di `ChangeProposal` -- l'obiettivo strategico dichiarato all'avvio di questo progetto (§1: "primo incremento concreto del più ampio scheduled batch workflow");
 - patch di vincoli non strutturali con schema separato;
 - proposte di topologia/proxy/benchmark ad alto impatto;
 - confronto e ranking di proposte;
@@ -823,7 +823,7 @@ Exit criteria:
 - deployment multiutente con autenticazione e RBAC;
 - notifiche esterne con approval separata.
 
-**Nota di implementazione (Investment Committee):** `project/advisor/committee.py`'s `run_committee_batch` implementa solo la **prova strutturale** -- un secondo producer non interattivo (`producer_kind="scheduled_batch"`, `producer_id="investment-committee"`) che crea proposte `pending_approval` su più nodi in un'unica run condividendo un `batch_id`, attraverso la stessa `services.create_proposal` (stessa validazione, stesso hash, stessa state machine) usata dal Node Advisor conversazionale e dal percorso fixture -- zero modifiche a schema o state machine, la prova che la scelta producer-agnostic di Fase 0/§3.4 ha retto. `node_views` (quali nodi toccare, quali view proporre) è fornito dal chiamante -- **non c'è ancora un vero ragionamento del committee** (sintesi multi-specialist macro/market, decisione autonoma su quali nodi toccare): quello resta un lavoro sostanziale a sé, non ancora pianificato in dettaglio, così come il trigger schedulato (LazyPulse) reale -- entrambi rimandati a quando servirà davvero un committee che ragiona, non solo un producer che scrive.
+**Nota di implementazione (scheduled batch workflow):** `project/advisor/batch_producer.py`'s `run_proposal_batch` implementa solo la **prova strutturale** -- un secondo producer non interattivo (`producer_kind="scheduled_batch"`, `producer_id="scheduled-research"`) che crea proposte `pending_approval` su più nodi in un'unica run condividendo un `batch_id`, attraverso la stessa `services.create_proposal` (stessa validazione, stesso hash, stessa state machine) usata dal Node Advisor conversazionale e dal percorso fixture -- zero modifiche a schema o state machine, la prova che la scelta producer-agnostic di Fase 0/§3.4 ha retto. `node_views` (quali nodi toccare, quali view proporre) è fornito dal chiamante -- **non c'è ancora un vero ragionamento del batch producer** (sintesi multi-specialist macro/market, decisione autonoma su quali nodi toccare): quello resta un lavoro sostanziale a sé, non ancora pianificato in dettaglio, così come il trigger schedulato (LazyPulse) reale -- entrambi rimandati a quando servirà davvero un batch producer che ragiona, non solo un producer che scrive.
 
 ## 14. Ordine dei pull request
 

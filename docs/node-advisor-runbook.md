@@ -76,14 +76,14 @@ Ogni passo è raggiungibile a partire dal solo `proposal_id` (o `conversation_id
 - **Run di conferma non implementato.** Il contratto (`ProposalStatus`) e la state machine dichiarano gli stati `confirmation_pending`/`confirmed`/`confirmation_failed` (§4.5), e §1 del piano finalizzato descrive l'intento ("il run di conferma parte dopo il commit come job separato"), ma nessuna fase (0-5) ha mai incluso un task concreto per implementarlo -- `approval_service.apply_proposal` si ferma allo stato `applied`. Una proposta applicata oggi non transiterà mai automaticamente a `confirmed`. Gap del piano originale, non introdotto da questa fase; da valutare per Fase 6 se ancora rilevante.
 - **`Session` del Node Advisor è in-memory.** `project/advisor/agent.py`'s `_advisor_session()` costruisce un `Session(redact=...)` senza `db=`: la redazione (segreti + PII) è cablata da subito, ma nessun log LLM viene persistito su disco per ora. Se in futuro serve osservabilità persistente delle chiamate LLM stesse (non l'audit di dominio, già persistito -- vedi §4), va passato un `db=` esplicito, mantenendo lo stesso redattore.
 
-## 6. Investment Committee (secondo producer, Fase 6)
+## 6. scheduled batch workflow (secondo producer, Fase 6)
 
-`project/advisor/committee.py`'s `run_committee_batch(tree_id, node_views, ...)` è un secondo producer di `ChangeProposal`, non instradato da nessuna API HTTP -- va chiamato direttamente (script, shell Python, o un futuro trigger schedulato):
+`project/advisor/batch_producer.py`'s `run_proposal_batch(tree_id, node_views, ...)` è un secondo producer di `ChangeProposal`, non instradato da nessuna API HTTP -- va chiamato direttamente (script, shell Python, o un futuro trigger schedulato):
 
 ```python
-from advisor.committee import run_committee_batch
+from project.advisor.batch_producer import run_proposal_batch
 
-result = run_committee_batch(
+result = run_proposal_batch(
     tree_id,
     {"equity": [...view dicts...], "bond": [...view dicts...]},
     db_path=db_path,

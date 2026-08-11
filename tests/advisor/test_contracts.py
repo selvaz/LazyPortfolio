@@ -116,8 +116,8 @@ def test_change_proposal_kind_is_an_open_string_not_a_closed_literal() -> None:
     """docs/adr/0001-node-advisor-architecture.md Decision 3, point 1: a
     second producer's kind must be accepted without a schema change here."""
 
-    proposal = _minimal_proposal(kind="a_future_committee_kind_nobody_registered_yet")
-    assert proposal.kind == "a_future_committee_kind_nobody_registered_yet"
+    proposal = _minimal_proposal(kind="a_future_batch_kind_nobody_registered_yet")
+    assert proposal.kind == "a_future_batch_kind_nobody_registered_yet"
 
 
 def test_change_proposal_kind_cannot_be_blank() -> None:
@@ -137,7 +137,7 @@ def test_model_provenance_distinguishes_producer_kind() -> None:
         producer_kind="interactive_chat", producer_id="node-advisor", model="test-model"
     )
     batch = ModelProvenance(
-        producer_kind="scheduled_batch", producer_id="investment-committee", model="test-model"
+        producer_kind="scheduled_batch", producer_id="scheduled-research", model="test-model"
     )
     assert interactive.producer_kind != batch.producer_kind
 
