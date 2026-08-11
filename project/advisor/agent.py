@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from advisor import services
+from project.advisor import services
 
 if TYPE_CHECKING:
     from lazyportfolio.backend import OptimizationDataBackend

@@ -17,7 +17,9 @@ period's actual holding weights. ``B0`` and ``STATIC_FINAL`` need no extra
 work at all: they are just the reference run's own ``B0``/``FINAL`` curves.
 """
 from __future__ import annotations
-import argparse, json, sys
+
+import argparse
+import json
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -26,20 +28,21 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "project")]
-import tree_studio  # noqa: E402
+from html import escape  # noqa: E402
+
+from project import tree_studio  # noqa: E402
+from project.tree_studio_v2.exports import _tree_html, build_client_report  # noqa: E402
+
 from lazyportfolio.calendar import _annualization_factor  # noqa: E402
 from lazyportfolio.models import BacktestSpec  # noqa: E402
-from lazyportfolio.walk_forward import prepare_walk_forward_inputs  # noqa: E402
+from lazyportfolio.v2 import run_history, store  # noqa: E402
 from lazyportfolio.v2.backtest import HierarchicalV2Backtester, _V2Ledger  # noqa: E402
 from lazyportfolio.v2.contracts import V2BacktestReport, V2Fold  # noqa: E402
 from lazyportfolio.v2.hierarchy import HierarchicalV2Estimator  # noqa: E402
 from lazyportfolio.v2.model import V2Model  # noqa: E402
-from lazyportfolio.v2 import run_history, store  # noqa: E402
 from lazyportfolio.v2.tree_pruning import PruningRule, prune_config, rule_payload  # noqa: E402
-from pruning_runner import significance_report  # noqa: E402
-from tree_studio_v2.exports import build_client_report, _tree_html  # noqa: E402
-from html import escape  # noqa: E402
+from lazyportfolio.walk_forward import prepare_walk_forward_inputs  # noqa: E402
+from scripts.pruning_runner import significance_report  # noqa: E402
 
 DEFAULT_BURN_IN_YEARS = 2.0
 

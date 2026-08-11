@@ -12,17 +12,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "project"))
-
-from pruning_runner import evaluate_pruning  # noqa: E402
-from rolling_vs_expanding_backtest import run_variant  # noqa: E402
 
 from lazyportfolio.v2.tree_pruning import PruningRule  # noqa: E402
+from scripts.pruning_runner import evaluate_pruning  # noqa: E402
+from scripts.rolling_vs_expanding_backtest import run_variant  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

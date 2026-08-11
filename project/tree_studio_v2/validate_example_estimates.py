@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -11,7 +10,6 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
 
 from lazyportfolio.backend import MarketDataHubOptimizationBackend  # noqa: E402
 from lazyportfolio.hierarchical_v2 import (  # noqa: E402

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import html
 import json
-import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,13 +25,10 @@ from types import SimpleNamespace
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "project"))
 
 import numpy as np  # noqa: E402
-
-import tree_studio  # noqa: E402
-from tree_studio_v2.exports import _curve_svg, _num, _pct  # noqa: E402
+from project import tree_studio  # noqa: E402
+from project.tree_studio_v2.exports import _curve_svg, _num, _pct  # noqa: E402
 
 from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns  # noqa: E402
 from lazyportfolio.scientific_study import _holm_adjust, paired_block_bootstrap  # noqa: E402

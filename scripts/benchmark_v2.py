@@ -24,10 +24,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "project"))
 
-import tree_studio  # noqa: E402  (reuses _v2_inputs/_config_hash/_data_fingerprint/_config_instruments)
+from project import (
+    tree_studio,  # noqa: E402  (reuses _v2_inputs/_config_hash/_data_fingerprint/_config_instruments)
+)
 
 from lazyportfolio.calendar import _annualization_factor, _resample_simple_returns  # noqa: E402
 from lazyportfolio.hierarchical_v2 import (  # noqa: E402

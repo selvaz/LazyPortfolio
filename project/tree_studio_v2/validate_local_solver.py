@@ -6,14 +6,12 @@ invariant and does not import Tree Studio or any legacy optimisation engine.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
 
 from lazyportfolio.hierarchical_v2 import (  # noqa: E402
     V2Constraints,

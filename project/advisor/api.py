@@ -17,8 +17,8 @@ import re
 from typing import Any
 from uuid import UUID
 
-from advisor import jobs, services
 from lazyportfolio.advisor.node_universe import NodeNotFoundError
+from project.advisor import jobs, services
 
 _NODE_CONTEXT = re.compile(
     r"^/api/trees/(?P<tree_id>[^/]+)/nodes/(?P<node_id>[^/]+)/advisor/context$"
