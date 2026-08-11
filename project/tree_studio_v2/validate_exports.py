@@ -6,22 +6,18 @@ import csv
 import hashlib
 import io
 import json
-import sys
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "project"))
-
-from tree_studio_v2.exports import build_audit_bundle, build_client_report  # noqa: E402
-from tree_studio_v2.validate_backtests import load_daily  # noqa: E402
 
 from lazyportfolio.hierarchical_v2 import (  # noqa: E402
     HierarchicalV2Backtester,
     HierarchicalV2Estimator,
     V2Model,
 )
+from project.tree_studio_v2.exports import build_audit_bundle, build_client_report  # noqa: E402
+from project.tree_studio_v2.validate_backtests import load_daily  # noqa: E402
 
 MODEL_PATH = (
     ROOT

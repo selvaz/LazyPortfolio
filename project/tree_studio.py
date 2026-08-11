@@ -33,11 +33,6 @@ from threading import Event, Lock, Thread
 from typing import Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
-from tree_studio_v2.exports import build_audit_bundle, build_client_report
-
-from advisor import api as _advisor_api
-from advisor import jobs as _advisor_jobs
-from advisor import services as _advisor_services
 from lazyportfolio.advisor import snapshot as _snapshot
 from lazyportfolio.artifact_registry import register_report_artifact
 from lazyportfolio.backend import OptimizationDataset
@@ -57,6 +52,10 @@ from lazyportfolio.v2 import run_history as _run_history
 from lazyportfolio.v2 import store as _store
 from lazyportfolio.v2.mode import mode_from_config as _mode_from_config
 from lazyportfolio.v2.store import _as_json
+from project.advisor import api as _advisor_api
+from project.advisor import jobs as _advisor_jobs
+from project.advisor import services as _advisor_services
+from project.tree_studio_v2.exports import build_audit_bundle, build_client_report
 
 APP_DIR = Path(__file__).resolve().parent
 INDEX_FILE = APP_DIR / "tree_studio.html"

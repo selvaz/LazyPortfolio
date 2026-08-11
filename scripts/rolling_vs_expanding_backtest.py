@@ -29,7 +29,7 @@ property of the method.
 
 Run:
 
-    python scripts/rolling_vs_expanding_backtest.py
+    python -m scripts.rolling_vs_expanding_backtest
         --tree "<name>" [--tree "<name>" ...]
         [--pruning-tree "<name>" ...]
         --max-workers N (--telegram | --no-telegram) [--skip-pruning]
@@ -54,30 +54,36 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# NOTE (ecosystem cleanup, 2026-08-11): these two inserts are still here on
-# purpose. Removing them means turning `project/` into a package and
-# rewriting the flat sibling imports inside it — `tree_studio` imports
-# `tree_studio_v2`, which imports `advisor`, and so on. That is a change to
-# public engine files with a real blast radius, and it belongs in its own
-# scoped step rather than being done in passing while extracting a preset.
-# What this commit does remove is the committee's configuration: which trees,
-# which of them are pruned, how many workers and whether anything is sent are
-# now all stated on the command line.
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "project"))
 
-import tree_studio  # noqa: E402  (reuses _run_full_backtest/_v2_export_artifacts)
-from adaptive_pruning_backtest import evaluate_adaptive_pruning  # noqa: E402
+from project import tree_studio  # noqa: E402  (reuses _run_full_backtest/_v2_export_artifacts)
 
 from lazyportfolio.v2 import run_history, store  # noqa: E402
+from scripts.adaptive_pruning_backtest import evaluate_adaptive_pruning  # noqa: E402
 
 
 def _log(message: str) -> None:
     print(f"[{datetime.now(UTC).isoformat()}] {message}", flush=True)
+
+
+class SendDocument(Protocol):
+    """How a report leaves this process, if it leaves at all."""
+
+    def __call__(self, *, content: bytes, filename: str, caption: str) -> None: ...
+
+
+def _no_send(*, content: bytes, filename: str, caption: str) -> None:
+    """The sender a run gets when it was told not to send.
+
+    A function rather than a flag each call site consults. The decision is
+    made once, where the run is configured, and nothing below it can send by
+    forgetting to check — which is exactly what went wrong: the pruning
+    evaluation ignored the flag and sent anyway.
+    """
+    _log(f"Telegram: not sending {filename!r} ({len(content)} bytes), send is off")
 
 
 def _send_telegram_document(*, content: bytes, filename: str, caption: str) -> None:
@@ -173,7 +179,7 @@ def _build_report_html(
 
 
 def run_variant(name: str, *, expanding: bool, max_workers: int,
-                send_telegram: bool = True) -> dict[str, Any]:
+                send: SendDocument) -> dict[str, Any]:
     """Run one methodology and attach TWO artifacts to its run_history row:
     the real Tree Studio client report (``kind="report"``, built by
     ``tree_studio._v2_export_artifacts`` -- the exact same
@@ -266,12 +272,11 @@ def run_variant(name: str, *, expanding: bool, max_workers: int,
         f"Sharpe {final_metrics.get('annualized_sharpe', 0):.2f} | "
         f"max DD {final_metrics.get('max_drawdown', 0):.2%}"
     )
-    if send_telegram:
-        _send_telegram_document(
-            content=client_blob,
-            filename=f"{store.sanitize_model_name(name)}_{label}_client_report.html",
-            caption=caption,
-        )
+    send(
+        content=client_blob,
+        filename=f"{store.sanitize_model_name(name)}_{label}_client_report.html",
+        caption=caption,
+    )
 
     summary_html = _build_report_html(
         tree_name=name,
@@ -300,7 +305,7 @@ def run_variant(name: str, *, expanding: bool, max_workers: int,
 
 
 def _evaluate_and_send_adaptive_pruning(name: str, *, max_workers: int,
-                                        send_telegram: bool = True) -> None:
+                                        send: SendDocument) -> None:
     """Dynamic, per-fold, causal pruning evidence -- reused evidence window
     is cumulative (``evidence_window_years=None``): each rebalance date
     prunes from the node-vs-father OOS track record accumulated since
@@ -325,7 +330,7 @@ def _evaluate_and_send_adaptive_pruning(name: str, *, max_workers: int,
         f"{name!r}: adaptive pruning evaluated -- Sharpe {final.get('annualized_sharpe', 0):.3f} "
         f"vs static {static.get('annualized_sharpe', 0):.3f} (run_id={payload['run_id']})"
     )
-    _send_telegram_document(
+    send(
         content=payload["report_html"],
         filename=f"{store.sanitize_model_name(name)}_adaptive_pruning_report.html",
         caption=(
@@ -378,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("choose --telegram or --no-telegram; sending is not a default")
     if args.max_workers <= 0:
         parser.error("--max-workers must be positive")
+    # Decided once, here. Below this line nothing consults a flag, so nothing
+    # can send by forgetting to.
+    send: SendDocument = _send_telegram_document if args.telegram else _no_send
     names = args.trees
     unknown = [t for t in args.pruning_trees if t not in names]
     if unknown:
@@ -387,9 +395,9 @@ def main(argv: list[str] | None = None) -> int:
     _log(f"=== rolling vs expanding backtest job starting for {names!r} ===")
     for name in names:
         rolling = run_variant(name, expanding=False, max_workers=args.max_workers,
-                              send_telegram=args.telegram)
+                              send=send)
         expanding = run_variant(name, expanding=True, max_workers=args.max_workers,
-                                send_telegram=args.telegram)
+                                send=send)
         _log(
             f"=== {name!r} done === "
             f"rolling: wall={rolling['wall_clock_seconds']:.1f}s "
@@ -399,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not args.skip_pruning and name in args.pruning_trees:
             _evaluate_and_send_adaptive_pruning(name, max_workers=args.max_workers,
-                                                send_telegram=args.telegram)
+                                                send=send)
     _log("=== job complete ===")
     return 0
 

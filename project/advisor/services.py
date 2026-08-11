@@ -22,7 +22,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from advisor import jobs
 from lazyportfolio.advisor import approval_service, node_universe
 from lazyportfolio.advisor import conversation_repository as conversations
 from lazyportfolio.advisor import counterfactual as counterfactual_service
@@ -39,6 +38,7 @@ from lazyportfolio.advisor.contracts import (
 )
 from lazyportfolio.advisor.patch import views_patch_path
 from lazyportfolio.v2.mode import mode_from_config
+from project.advisor import jobs
 
 if TYPE_CHECKING:
     from advisor.jobs import JobRecord

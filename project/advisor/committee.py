@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from advisor import services
+from project.advisor import services
 
 if TYPE_CHECKING:
     from lazyportfolio import OptimizationDataBackend
