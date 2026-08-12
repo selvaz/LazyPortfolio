@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: ["main", "claude/**"]
+    branches: ["main", "claude/**", "feat/**"]
   pull_request:
 
 # Least privilege: every job only reads the repo. Steps run third-party code
