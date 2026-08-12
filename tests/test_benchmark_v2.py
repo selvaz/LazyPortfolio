@@ -12,6 +12,8 @@ combinations need solving.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -88,18 +90,71 @@ def test_forward_backward_solve_count_excludes_reused_leaf(two_node_model_and_re
     assert solves == 3  # forward: root + child; backward: root only (child reused)
 
 
-def test_forward_backward_does_not_double_count_solve_seconds(two_node_model_and_returns) -> None:
-    model, returns = two_node_model_and_returns
-    estimate_fb = HierarchicalV2Estimator().estimate(
-        model, returns, mode="forward_backward", periods_per_year=252.0
+def _audit(component_id, pass_kind, solve_seconds):
+    return SimpleNamespace(
+        component_id=component_id,
+        pass_kind=pass_kind,
+        solve_seconds=solve_seconds,
+        restart_candidate_count=1,
+        problem_class="synthetic",
     )
-    estimate_fwd = HierarchicalV2Estimator().estimate(
-        model, returns, mode="forward", periods_per_year=252.0
+
+
+def _result(primary, forward):
+    return SimpleNamespace(
+        node_results={name: SimpleNamespace(audit=audit) for name, audit in primary.items()},
+        forward_node_results={
+            name: SimpleNamespace(audit=audit) for name, audit in forward.items()
+        },
     )
-    _, seconds_fb, _, _ = local_solves(estimate_fb)
-    _, seconds_fwd, _, _ = local_solves(estimate_fwd)
-    # forward_backward does exactly one more real solve than forward (the
-    # root's backward re-solve) -- its total solve time must be at least
-    # forward's, not roughly double it (which double-counting would produce).
-    assert seconds_fb >= seconds_fwd
-    assert seconds_fb < seconds_fwd * 1.9
+
+
+def test_reused_audit_is_counted_once_even_if_its_recorded_time_differs() -> None:
+    result = _result(
+        {"leaf": _audit("node:leaf", "forward", 0.2)},
+        {"leaf": _audit("node:leaf", "forward", 9.9)},
+    )
+    solves, seconds, _, _ = local_solves(result)
+    assert solves == 1
+    assert seconds == pytest.approx(0.2)
+
+
+def test_distinct_passes_are_counted_even_if_their_times_are_identical() -> None:
+    result = _result(
+        {"root": _audit("node:root", "backward", 0.3)},
+        {"root": _audit("node:root", "forward", 0.3)},
+    )
+    solves, seconds, _, _ = local_solves(result)
+    assert solves == 2
+    assert seconds == pytest.approx(0.6)
+
+
+def test_forward_backward_counts_root_twice_and_reused_leaf_once() -> None:
+    result = _result(
+        {
+            "root": _audit("node:root", "backward", 0.3),
+            "leaf": _audit("node:leaf", "forward", 0.1),
+        },
+        {
+            "root": _audit("node:root", "forward", 0.2),
+            "leaf": _audit("node:leaf", "forward", 8.0),
+        },
+    )
+    solves, seconds, slsqp_calls, problem_classes = local_solves(result)
+    assert solves == 3
+    assert seconds == pytest.approx(0.6)
+    assert slsqp_calls == 3
+    assert problem_classes == ["synthetic"]
+
+
+@pytest.mark.parametrize(
+    ("component_id", "pass_kind", "message"),
+    [("", "forward", "component_id"), ("node:root", "", "pass_kind")],
+)
+def test_missing_audit_identity_is_rejected(component_id, pass_kind, message) -> None:
+    result = _result(
+        {"root": _audit(component_id, pass_kind, 0.1)},
+        {},
+    )
+    with pytest.raises(ValueError, match=message):
+        local_solves(result)

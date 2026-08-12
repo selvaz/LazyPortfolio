@@ -50,6 +50,22 @@ MODES = ["flat", "forward", "forward_backward"]
 DEFAULT_WORKLOADS = ("point_estimate",)
 
 
+def _audit_identity(audit: Any) -> tuple[str, str]:
+    """Return the semantic identity of one solver invocation.
+
+    ``solve_seconds`` is a measurement, not identity: two distinct solves may
+    take the same time and one reused audit may be copied with a different
+    representation.  The hierarchy already records the stable facts we need.
+    """
+    component_id = getattr(audit, "component_id", None)
+    pass_kind = getattr(audit, "pass_kind", None)
+    if not isinstance(component_id, str) or not component_id.strip():
+        raise ValueError("audit has no component_id; solve identity is ambiguous")
+    if not isinstance(pass_kind, str) or not pass_kind.strip():
+        raise ValueError("audit has no pass_kind; solve identity is ambiguous")
+    return component_id, pass_kind
+
+
 def _merge_pass_audits(primary: dict[str, Any], forward: dict[str, Any]) -> list[Any]:
     """Combine a pass's authoritative audits (backward, or a fold's own) with
     the Forward pass's, without double-counting a component neither pass
@@ -57,21 +73,18 @@ def _merge_pass_audits(primary: dict[str, Any], forward: dict[str, Any]) -> list
 
     forward_backward's ``node_results`` (backward) and
     ``forward_node_results`` overlap: a leaf reuses its Forward audit rather
-    than re-solving, so the identical audit (same ``component_id`` *and*
-    ``solve_seconds`` -- an unchanged carried-forward value, not a
-    coincidence) shows up in both dicts. An internal node that genuinely
-    re-solves in Backward has a *different* ``solve_seconds`` in each dict --
-    two distinct real solves, both must count. Comparing IDs alone (as an
-    earlier version of this function did) can't tell these apart and
-    undercounts genuine re-solves; comparing ``solve_seconds`` can.
+    than re-solving, so the same ``(component_id, pass_kind)`` appears in both
+    dictionaries. An internal node that genuinely re-solves has a Forward and
+    a Backward audit: same component, different pass, therefore two identities
+    and two solves.
+
+    Missing provenance is an error. Guessing from timings would make benchmark
+    accounting depend on scheduler noise and machine load.
     """
-    by_id = {a.component_id: a for a in primary.values()}
-    audits = list(by_id.values())
-    for component_id, forward_audit in {a.component_id: a for a in forward.values()}.items():
-        primary_audit = by_id.get(component_id)
-        if primary_audit is None or primary_audit.solve_seconds != forward_audit.solve_seconds:
-            audits.append(forward_audit)
-    return audits
+    by_identity: dict[tuple[str, str], Any] = {}
+    for audit in (*primary.values(), *forward.values()):
+        by_identity.setdefault(_audit_identity(audit), audit)
+    return list(by_identity.values())
 
 
 def local_solves(result: Any) -> tuple[int, float, int, list[str]]:
