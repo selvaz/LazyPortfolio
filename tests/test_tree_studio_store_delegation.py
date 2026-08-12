@@ -3,32 +3,21 @@
 that delegation is what guarantees the GUI and LazyTools' MCP
 ``portfolio_tree_*`` tools read/write byte-identical rows for the same name.
 
-``project/tree_studio.py`` is a script, not an installed package, so it is
-imported the same way ``project/tree_studio_v2/validate_exports.py`` already
-does elsewhere in this repo: put ``project/`` on ``sys.path`` first.
 """
 
 from __future__ import annotations
 
 import importlib
-import sys
-from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
+from project import tree_studio as studio_module
 
 
 @pytest.fixture()
 def tree_studio(monkeypatch, tmp_path):
     monkeypatch.setenv("LAZYPORTFOLIO_TREE_DB", str(tmp_path / "store.sqlite3"))
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        module = importlib.import_module("tree_studio")
-        yield importlib.reload(module)  # re-read the env var if already imported by another test
-    finally:
-        sys.path.remove(str(PROJECT_DIR))
+    # Reloaded so the env var is re-read even if another test imported it first.
+    return importlib.reload(studio_module)
 
 
 def _config() -> dict[str, object]:

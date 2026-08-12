@@ -4,8 +4,6 @@ slice"), never able to write anything, and must degrade to
 ``reviewed=False`` rather than raise on a malformed or unavailable
 ``claude_code`` response.
 
-``project/advisor/reviewer.py`` is a script module, not an installed
-package -- same sys.path pattern as ``tests/test_advisor_agent.py``. The
 disabled-path tests need no ``lazytools`` import at all (the module only
 imports ``claude_code`` once ``enabled=True``); the parsing tests mock
 ``lazytools.connectors.code_support.claude_code`` directly, so they still
@@ -15,24 +13,14 @@ need lazytools importable.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
+from project.advisor import reviewer
 
 
 @pytest.fixture()
 def reviewer_module():
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        import advisor.reviewer as module
-
-        yield module
-    finally:
-        sys.path.remove(str(PROJECT_DIR))
-        sys.modules.pop("advisor.reviewer", None)
+    return reviewer
 
 
 _PROPOSAL = {

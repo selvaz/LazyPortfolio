@@ -12,17 +12,10 @@ combinations need solving.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from benchmark_v2 import local_solves  # noqa: E402
+from scripts.benchmark_v2 import local_solves
 
 from lazyportfolio.hierarchical_v2 import (  # noqa: E402
     HierarchicalV2Estimator,

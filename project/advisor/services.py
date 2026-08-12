@@ -41,9 +41,8 @@ from lazyportfolio.v2.mode import mode_from_config
 from project.advisor import jobs
 
 if TYPE_CHECKING:
-    from advisor.jobs import JobRecord
-
     from lazyportfolio import OptimizationDataBackend
+    from project.advisor.jobs import JobRecord
 
 #: How long a fixture-created proposal stays approvable before it must be
 #: re-derived. Arbitrary but generous for a local single-user tool -- not a
@@ -265,11 +264,11 @@ def handle_advisor_turn_job(
     into ``project/tree_studio.py``'s live worker, not just exercised by
     tests -- see docs/node-advisor-operational-plan.md §13 Fase 5).
 
-    Imports ``advisor.agent`` lazily (module-level would be a circular
-    import: ``advisor.agent`` itself imports ``advisor.services``).
+    Imports ``project.advisor.agent`` lazily (module-level would be a
+    circular import: the agent itself imports this module).
     """
 
-    from advisor import agent as advisor_agent
+    from project.advisor import agent as advisor_agent
 
     conversation = conversations.get_conversation(job.conversation_id, db_path=db_path)
     if conversation is None:

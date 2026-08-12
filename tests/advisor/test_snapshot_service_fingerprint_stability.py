@@ -6,23 +6,17 @@ into ``lazyportfolio.advisor.snapshot`` -- these tests pin that the module
 script's wrappers still delegate, byte-for-byte, rather than having drifted
 back into a second copy of the logic.
 
-``project/tree_studio.py`` is a script, not an installed package -- same
-sys.path pattern as ``tests/test_tree_studio_cache_freshness.py``.
 """
 
 from __future__ import annotations
 
 import importlib
-import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
+from project import tree_studio
 
 from lazyportfolio.advisor import snapshot
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PROJECT_DIR = REPO_ROOT / "project"
 
 
 def _config() -> dict[str, Any]:
@@ -47,12 +41,7 @@ def _config() -> dict[str, Any]:
 
 @pytest.fixture()
 def tree_studio_module():
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        module = importlib.import_module("tree_studio")
-        yield importlib.reload(module)
-    finally:
-        sys.path.remove(str(PROJECT_DIR))
+    return importlib.reload(tree_studio)
 
 
 def test_config_hash_matches_a_hand_computed_golden_vector() -> None:

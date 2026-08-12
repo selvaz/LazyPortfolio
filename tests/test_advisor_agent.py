@@ -7,15 +7,12 @@ write/apply tool for an injection to escalate into in the first place.
 The LLM call itself is mocked in every test here except the opt-in live
 smoke test at the bottom (§12.1: no requirement that two LLM calls agree,
 only that validation/hash/apply are deterministic) -- ``project/tree_studio.py``
-is a script, not an installed package, same sys.path pattern as
 ``tests/test_tree_studio_cache_freshness.py``.
 """
 
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,23 +22,15 @@ import pytest
 pytest.importorskip("lazybridge", reason="Node Advisor Fase 4 requires lazybridge")
 pytest.importorskip("lazytools", reason="Node Advisor Fase 4 requires lazytools")
 
+from project.advisor import agent
+
 from lazyportfolio.advisor.repository import create_tree, get_head  # noqa: E402
 from lazyportfolio.backend import OptimizationDataset  # noqa: E402
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
 
 
 @pytest.fixture()
 def advisor_agent_module():
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        import advisor.agent as module
-
-        yield module
-    finally:
-        sys.path.remove(str(PROJECT_DIR))
-        sys.modules.pop("advisor.agent", None)
+    return agent
 
 
 def _config() -> dict[str, Any]:
