@@ -8,8 +8,8 @@ Two V2 tree configurations, both in the plain-dict shape
   Black-Litterman view on the "equity" pillar (a Node Advisor conversation
   on a nested node).
 * :data:`PILLAR_LEVEL_CONFIG` -- root -> four direct pillars
-  (equity/bond/commodity/cash-equivalent), no views, matching the top-down
-  ETF batch producer's granularity (``private workflow specification``).
+  (equity/bond/commodity/cash-equivalent), no views, matching the
+  asset-class granularity a top-down ETF allocation process works at.
 
 For each, a :func:`NodeContext` is built *manually* here (not through an
 automated resolver -- that is ``NodeUniverseResolver``, Fase 2) so Fase 0's
@@ -100,7 +100,7 @@ MULTI_LEVEL_CONFIG: dict[str, object] = {
 }
 
 #: Root -> four direct pillars, no grandchildren -- coherent with the
-#: top-down ETF batch producer's asset-class granularity. "cash" is represented
+#: the asset-class granularity of a top-down ETF allocation process. "cash" is represented
 #: as a short-duration T-Bill ETF, not the special ``cash:rf``/``cash:borrow``
 #: financing labels (those are a different, node-local financing axis --
 #: see lazyportfolio.v2.validation._is_financing_view_label).
