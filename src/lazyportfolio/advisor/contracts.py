@@ -38,7 +38,7 @@ ProposalStatus = Literal[
 ]
 
 #: §3.4 point 3 -- who produced a proposal: a human conversation (the Node
-#: Advisor MVP), or a scheduled batch job (the future scheduled batch workflow).
+#: Advisor MVP), or a scheduled batch job (a future non-interactive producer).
 ProducerKind = Literal["interactive_chat", "scheduled_batch"]
 
 #: Mirrors lazyportfolio.v2.contracts.Mode without importing it: the advisor

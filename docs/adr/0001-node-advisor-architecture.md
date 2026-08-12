@@ -26,8 +26,8 @@ libreria Python, non il contrario.
 Motivazione: LazyPortfolio deve restare utilizzabile (e testabile) senza
 alcuna dipendenza LLM — è il motore quantitativo, non l'agente. Invertire la
 dipendenza renderebbe impossibile usare LazyPortfolio in un contesto
-batch/non conversazionale (esattamente il caso d'uso del futuro Investment
-Batch producer, vedi Decisione 3).
+batch/non conversazionale (esattamente il caso d'uso di un futuro produttore
+batch, vedi Decisione 3).
 
 ## Decisione 2 — Trasporto HTTP/SSE minimale, non un framework nuovo subito
 
@@ -43,8 +43,8 @@ anticipato).
 ## Decisione 3 — Contratti producer-agnostic fin dall'MVP
 
 Il Node Advisor è il primo produttore di `ChangeProposal`, non l'unico
-previsto: il futuro scheduled batch workflow (`private workflow specification`)
-deve poter produrre proposte sugli stessi nodi usando lo stesso contratto di
+previsto: un futuro produttore batch, la cui specifica sta fuori da questo
+repository, deve poter produrre proposte sugli stessi nodi usando lo stesso contratto di
 validazione/snapshot/approvazione, senza un secondo sistema parallelo. Questo
 impone, fin dalla Fase 0:
 
@@ -52,7 +52,7 @@ impone, fin dalla Fase 0:
    validator, non un `Literal` chiuso a un solo valore.
 2. Le proposte hanno un `batch_id` opzionale (nullable) che le raggruppa —
    il Node Advisor conversazionale lo lascia `None`, un futuro producer
-   batch (il batch producer) lo popola per raggruppare le proposte multi-nodo di
+   batch lo popola per raggruppare le proposte multi-nodo di
    una singola run.
 3. `ModelProvenance` distingue esplicitamente `producer_kind`
    (`"interactive_chat"` vs `"scheduled_batch"`) e `producer_id` libero.
