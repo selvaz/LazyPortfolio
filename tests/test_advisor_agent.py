@@ -295,13 +295,13 @@ def test_propose_route_with_a_valid_view_creates_a_pending_proposal(
 def test_advisor_session_redacts_both_secrets_and_pii(advisor_agent_module) -> None:
     session = advisor_agent_module._advisor_session()
     payload = {
-        "message": "contact doctor.selva@gmail.com, token sk-abcdefghijklmnopqrstuvwxyz",
+        "message": "contact analyst.example@example.com, token sk-abcdefghijklmnopqrstuvwxyz",
         "nested": {"note": "call 555-123-4567"},
     }
 
     redacted = session._redact(payload)
 
-    assert "doctor.selva@gmail.com" not in redacted["message"]
+    assert "analyst.example@example.com" not in redacted["message"]
     assert "sk-abcdefghijklmnopqrstuvwxyz" not in redacted["message"]
     assert "555-123-4567" not in redacted["nested"]["note"]
 
