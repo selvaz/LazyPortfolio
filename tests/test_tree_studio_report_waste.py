@@ -8,23 +8,17 @@ _v2_inputs, the same boundary test_tree_studio_cache_freshness.py uses),
 not a fully-mocked shortcut, so this actually proves the claim rather than
 just asserting a monkeypatch was called.
 
-``project/tree_studio.py`` is a script, not an installed package, so it is
-imported the same way the other tree_studio tests do: put ``project/`` on
-``sys.path`` first.
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import importlib
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
+from project import tree_studio as studio_module
 
 
 def _config() -> dict[str, Any]:
@@ -57,38 +51,31 @@ def _config() -> dict[str, Any]:
 @pytest.fixture()
 def tree_studio(monkeypatch, tmp_path):
     monkeypatch.setenv("LAZYPORTFOLIO_TREE_DB", str(tmp_path / "store.sqlite3"))
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        import importlib
+    module = importlib.reload(studio_module)
 
-        module = importlib.import_module("tree_studio")
-        module = importlib.reload(module)
+    rng = np.random.default_rng(20260806)
+    index = pd.bdate_range("2020-01-01", periods=400)
+    returns = pd.DataFrame(
+        {
+            "ticker:A": rng.normal(0.0004, 0.01, len(index)),
+            "ticker:B": rng.normal(0.0003, 0.008, len(index)),
+        },
+        index=index,
+    )
+    from lazyportfolio.backend import OptimizationDataset
+    from lazyportfolio.hierarchical_v2 import V2Model
 
-        rng = np.random.default_rng(20260806)
-        index = pd.bdate_range("2020-01-01", periods=400)
-        returns = pd.DataFrame(
-            {
-                "ticker:A": rng.normal(0.0004, 0.01, len(index)),
-                "ticker:B": rng.normal(0.0003, 0.008, len(index)),
-            },
-            index=index,
-        )
-        from lazyportfolio.backend import OptimizationDataset
-        from lazyportfolio.hierarchical_v2 import V2Model
+    fake_dataset = OptimizationDataset(
+        returns=returns, metadata={"source": "fake", "n_rows": len(returns)}
+    )
 
-        fake_dataset = OptimizationDataset(
-            returns=returns, metadata={"source": "fake", "n_rows": len(returns)}
-        )
+    def _fake_v2_inputs(config):
+        model = V2Model.from_config(config)
+        return model, fake_dataset
 
-        def _fake_v2_inputs(config):
-            model = V2Model.from_config(config)
-            return model, fake_dataset
-
-        monkeypatch.setattr(module, "_v2_inputs", _fake_v2_inputs)
-        module._raw_backtest_cache.clear()
-        yield module
-    finally:
-        sys.path.remove(str(PROJECT_DIR))
+    monkeypatch.setattr(module, "_v2_inputs", _fake_v2_inputs)
+    module._raw_backtest_cache.clear()
+    yield module
 
 
 def test_plain_backtest_view_never_captures_audit_series(tree_studio, monkeypatch):

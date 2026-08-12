@@ -10,9 +10,6 @@ thing monkeypatched is ``tree_studio._v2_export_artifacts`` itself, so these
 tests exercise the artifact-registration wiring without needing a live
 Market Data Hub database to produce a real backtest/report.
 
-``project/tree_studio.py`` is a script, not an installed package, so it is
-imported the same way ``tests/test_studio_compat.py`` already does: put
-``project/`` on ``sys.path`` first.
 """
 
 from __future__ import annotations
@@ -20,10 +17,8 @@ from __future__ import annotations
 import http.client
 import importlib
 import json
-import sys
 import threading
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -33,9 +28,7 @@ pytest.importorskip(
 )
 
 from lazytools.registry import search_artifacts  # noqa: E402
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
+from project import tree_studio  # noqa: E402
 
 
 def _config(name: str) -> dict[str, Any]:
@@ -100,23 +93,18 @@ def studio(monkeypatch, tmp_path):
     then serve it on a real ephemeral localhost port for the duration of the
     test."""
     monkeypatch.setenv("LAZYPORTFOLIO_TREE_DB", str(tmp_path / "store.sqlite3"))
-    sys.path.insert(0, str(PROJECT_DIR))
-    try:
-        module = importlib.import_module("tree_studio")
-        module = importlib.reload(module)  # fresh in-memory caches, re-read env vars
-        monkeypatch.setattr(module, "_v2_export_artifacts", _fake_export_artifacts)
+    module = importlib.reload(tree_studio)  # fresh in-memory caches, re-read env vars
+    monkeypatch.setattr(module, "_v2_export_artifacts", _fake_export_artifacts)
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), module.StudioHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            yield module, server.server_address[1]
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.StudioHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield module, server.server_address[1]
     finally:
-        sys.path.remove(str(PROJECT_DIR))
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_first_report_request_registers_exactly_one_artifact(studio, monkeypatch, tmp_path):

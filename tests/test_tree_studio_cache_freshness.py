@@ -11,9 +11,6 @@ needing a real Market Data Hub database, while still exercising the actual
 request path (in-memory cache, disk-backed run_history fallback, producer
 invocation) rather than just the key-formatting helper in isolation.
 
-``project/tree_studio.py`` is a script, not an installed package, so it is
-imported the same way ``tests/test_tree_studio_artifact_registry.py`` does:
-put ``project/`` on ``sys.path`` first.
 """
 
 from __future__ import annotations
@@ -21,16 +18,12 @@ from __future__ import annotations
 import http.client
 import importlib
 import json
-import sys
 import threading
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
+from project import tree_studio
 
 
 def _config() -> dict[str, Any]:
@@ -67,35 +60,30 @@ def _post(port: int, path: str, payload: dict[str, Any]) -> tuple[int, dict[str,
 @pytest.fixture()
 def studio(monkeypatch, tmp_path):
     monkeypatch.setenv("LAZYPORTFOLIO_TREE_DB", str(tmp_path / "store.sqlite3"))
-    sys.path.insert(0, str(PROJECT_DIR))
+    module = importlib.reload(tree_studio)  # fresh in-memory caches, re-read env vars
+
+    calls: list[int] = []
+
+    def _fake_estimate_payload(config: dict[str, Any]) -> dict[str, Any]:
+        calls.append(1)
+        return {
+            "ok": True,
+            "engine": "fake",
+            "terminal_weights": {"AAA": 1.0},
+            "call_count": len(calls),
+        }
+
+    monkeypatch.setattr(module, "_v2_estimate_payload", _fake_estimate_payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.StudioHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
-        module = importlib.import_module("tree_studio")
-        module = importlib.reload(module)  # fresh in-memory caches, re-read env vars
-
-        calls: list[int] = []
-
-        def _fake_estimate_payload(config: dict[str, Any]) -> dict[str, Any]:
-            calls.append(1)
-            return {
-                "ok": True,
-                "engine": "fake",
-                "terminal_weights": {"AAA": 1.0},
-                "call_count": len(calls),
-            }
-
-        monkeypatch.setattr(module, "_v2_estimate_payload", _fake_estimate_payload)
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), module.StudioHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            yield module, server.server_address[1], calls
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+        yield module, server.server_address[1], calls
     finally:
-        sys.path.remove(str(PROJECT_DIR))
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_same_config_same_fingerprint_is_a_cache_hit(studio, monkeypatch):

@@ -4,8 +4,6 @@ criteria): fixture views -> conversation -> job -> worker -> proposal card
 -> approve -> new revision -> confirm. Also proves a crashed worker's job is
 recoverable (heartbeat-based reap), not stuck forever.
 
-``project/tree_studio.py`` is a script, not an installed package -- same
-sys.path pattern as ``tests/test_tree_studio_cache_freshness.py``.
 """
 
 from __future__ import annotations
@@ -14,7 +12,6 @@ import functools
 import http.client
 import importlib
 import json
-import sys
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -22,13 +19,11 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from project import tree_studio
 
 from lazyportfolio.advisor.conversation_repository import create_conversation
 from lazyportfolio.advisor.repository import create_tree, get_head
 from lazyportfolio.backend import OptimizationDataset
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PROJECT_DIR = REPO_ROOT / "project"
 
 
 def _config() -> dict[str, Any]:
@@ -92,21 +87,16 @@ def frame() -> pd.DataFrame:
 def studio(monkeypatch, tmp_path):
     store_path = tmp_path / "store.sqlite3"
     monkeypatch.setenv("LAZYPORTFOLIO_TREE_DB", str(store_path))
-    sys.path.insert(0, str(PROJECT_DIR))
+    module = importlib.reload(tree_studio)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), module.StudioHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
-        module = importlib.import_module("tree_studio")
-        module = importlib.reload(module)
-        server = ThreadingHTTPServer(("127.0.0.1", 0), module.StudioHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            yield module, server.server_address[1], store_path
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
+        yield module, server.server_address[1], store_path
     finally:
-        sys.path.remove(str(PROJECT_DIR))
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _post(port: int, path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -427,7 +417,7 @@ def test_advisor_turn_propose_route_via_http_creates_a_pending_proposal(
 ) -> None:
     pytest.importorskip("lazybridge")
     pytest.importorskip("lazytools")
-    from advisor.agent import AdvisorTurnResult, CandidateView
+    from project.advisor.agent import AdvisorTurnResult, CandidateView
 
     payload = AdvisorTurnResult(
         route="propose",
@@ -479,7 +469,7 @@ def test_advisor_turn_propose_route_via_http_creates_a_pending_proposal(
 def test_advisor_turn_explain_route_via_http_creates_no_proposal(studio, monkeypatch) -> None:
     pytest.importorskip("lazybridge")
     pytest.importorskip("lazytools")
-    from advisor.agent import AdvisorTurnResult
+    from project.advisor.agent import AdvisorTurnResult
 
     payload = AdvisorTurnResult(
         route="explain", message="This node is currently min_risk with no views.", proposed_views=[]
