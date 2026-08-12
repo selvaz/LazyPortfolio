@@ -51,6 +51,11 @@ packages = ["src/lazyportfolio"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Tests exercise the repository-level ``project`` and ``scripts`` packages in
+# addition to the installable ``src/lazyportfolio`` package.  Declare that
+# import root explicitly so ``pytest`` and ``python -m pytest`` behave the same
+# in local checkouts and clean CI environments.
+pythonpath = ["."]
 asyncio_mode = "auto"
 
 [tool.ruff]
