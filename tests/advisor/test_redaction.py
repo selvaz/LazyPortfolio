@@ -2,7 +2,7 @@ from lazyportfolio.advisor.redaction import redact_pii
 
 
 def test_email_is_redacted() -> None:
-    assert redact_pii("contact me at doctor.selva@gmail.com please") == (
+    assert redact_pii("contact me at analyst.example@example.com please") == (
         "contact me at [redacted-email] please"
     )
 
@@ -32,10 +32,10 @@ def test_text_with_no_pii_is_returned_unchanged() -> None:
 
 
 def test_multiple_pii_instances_in_one_string_are_all_redacted() -> None:
-    text = "email a@b.com or b@c.com, or call 555-000-1111"
+    text = "email first@example.com or second@example.org, or call 555-000-1111"
     result = redact_pii(text)
-    assert "a@b.com" not in result
-    assert "b@c.com" not in result
+    assert "first@example.com" not in result
+    assert "second@example.org" not in result
     assert "555-000-1111" not in result
     assert result.count("[redacted-email]") == 2
     assert result.count("[redacted-phone]") == 1
