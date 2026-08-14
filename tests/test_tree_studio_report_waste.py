@@ -145,3 +145,22 @@ def test_report_and_audit_are_cached_independently(tree_studio, monkeypatch):
     }
     assert keys["backtest"] == keys["report"]  # both capture_audit_series=False
     assert keys["audit"] != keys["report"]
+
+
+def test_adaptive_policy_changes_reuse_the_same_reference_backtest(tree_studio):
+    base = _config()
+    with_policy = _config()
+    with_policy["backtest"]["adaptive_pruning"] = {
+        "enabled": True,
+        "min_sharpe_improvement": 0.03,
+    }
+    other_policy = _config()
+    other_policy["backtest"]["adaptive_pruning"] = {
+        "enabled": True,
+        "min_sharpe_improvement": 0.10,
+    }
+    keys = {
+        tree_studio._raw_backtest_key(config, capture_audit_series=False)
+        for config in (base, with_policy, other_policy)
+    }
+    assert len(keys) == 1

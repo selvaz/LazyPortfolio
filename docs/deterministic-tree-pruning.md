@@ -34,9 +34,35 @@ the underlying OOS observations, and the final gate are saved in
 Example:
 
 ```powershell
-python scripts/prune_tree_by_father.py "Global Multi-Asset - Selective Depth" --write-tree --output-name "Global Multi-Asset - Production Pruned"
+python -m scripts.prune_tree_by_father "Global Multi-Asset - Selective Depth" --write-tree --output-name "Global Multi-Asset - Production Pruned"
 ```
 
 Use `--min-sharpe-improvement` and `--max-drawdown-per-vol-ratio` only to change
 the explicitly recorded policy.  Without `--write-tree` the process runs and
 records its evidence but does not create a final saved tree.
+
+## Adaptive pruning
+
+Adaptive pruning is a separate, causal backtest of the same universal method.
+At each rebalance it compares every node with its father using only
+out-of-sample observations strictly earlier than the signal date. The evidence
+can be expanding or limited to a rolling window, and a burn-in period prevents
+decisions before enough evidence exists.
+
+The reusable implementation lives in
+`lazyportfolio.v2.adaptive_pruning`. It owns policy validation, evidence
+selection, pruning decisions, candidate re-estimation, weights and summary
+metrics. Both the command-line adapter and Tree Studio call this backend; they
+do not reimplement the method.
+
+Tree Studio exposes the backend at `POST /api/v2/adaptive-pruning`. The browser
+may enable the feature and choose burn-in, evidence window, Sharpe threshold,
+drawdown/volatility threshold, worker count, fold limit and expanding mode. It
+only sends these parameters and renders the returned decisions, metrics and
+weights. No pruning or portfolio calculation runs in JavaScript.
+
+The generic rolling-versus-expanding job accepts repeatable `--pruning-tree`
+arguments. When pruning is requested for a tree, a pruning failure is fatal to
+the job so the scheduler cannot report a complete daily run with missing
+evidence. Telegram delivery remains best-effort because results are persisted
+before notification.

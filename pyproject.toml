@@ -55,7 +55,15 @@ testpaths = ["tests"]
 # addition to the installable ``src/lazyportfolio`` package.  Declare that
 # import root explicitly so ``pytest`` and ``python -m pytest`` behave the same
 # in local checkouts and clean CI environments.
-pythonpath = ["."]
+#
+# ``src`` is here for a second reason, and it is not a convenience. Without it
+# ``lazyportfolio`` resolves through whatever editable install the machine
+# happens to carry, which can be a different checkout entirely: a suite run in
+# this tree can then answer green for code that is not in it. That is not
+# hypothetical -- it is how a review of this repository was nearly signed off
+# on the wrong tree on 14 August. ``.`` first, so the repository-level packages
+# keep winning; ``src`` after it, so the package under test is this one.
+pythonpath = [".", "src"]
 asyncio_mode = "auto"
 
 [tool.ruff]

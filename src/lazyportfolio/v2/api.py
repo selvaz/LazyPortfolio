@@ -1,5 +1,12 @@
 """Public assembly point for the split hierarchical optimizer V2."""
 
+from lazyportfolio.v2.adaptive_pruning import (
+    AdaptivePruningPolicy,
+    AdaptivePruningResult,
+    accumulated_node_metrics,
+    run_adaptive_pruning,
+    summarize_pruning_decisions,
+)
 from lazyportfolio.v2.backtest import (
     HierarchicalV2Backtester,
     _V2Ledger,
@@ -29,6 +36,8 @@ _RECOGNIZED_OBJECTIVES = RECOGNIZED_OBJECTIVES
 _ticker = ticker
 
 __all__ = [
+    "AdaptivePruningPolicy",
+    "AdaptivePruningResult",
     "CASH_BORROW",
     "CASH_LEND",
     "HierarchicalV2Backtester",
@@ -50,4 +59,7 @@ __all__ = [
     "_V2Ledger",
     "_ticker",
     "effective_setting",
+    "accumulated_node_metrics",
+    "run_adaptive_pruning",
+    "summarize_pruning_decisions",
 ]
