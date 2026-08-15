@@ -325,3 +325,31 @@ test('mean-reference terminology tooltip states father/B0 stay raw, not syntheti
     'tooltip must state father/B0 always stay raw'
   );
 });
+
+test('adaptive pruning controls round-trip as backend policy parameters', () => {
+  const window = makeWindow();
+  const config = fullConfig();
+  setAppState(window, config, 'root');
+  window.renderGlobal();
+
+  window.document.getElementById('prune-enabled').checked = true;
+  window.document.getElementById('prune-burn-in').value = '1.5';
+  window.document.getElementById('prune-window').value = '3';
+  window.document.getElementById('prune-sharpe').value = '0.05';
+  window.document.getElementById('prune-drawdown').value = '1.2';
+  window.document.getElementById('prune-workers').value = '6';
+  window.document.getElementById('prune-max-folds').value = '24';
+  window.document.getElementById('prune-expanding').checked = true;
+  window.applyGlobal();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(window.state.backtest.adaptive_pruning)), {
+    enabled: true,
+    burn_in_years: 1.5,
+    evidence_window_years: 3,
+    min_sharpe_improvement: 0.05,
+    max_drawdown_per_vol_ratio: 1.2,
+    workers: 6,
+    max_folds: 24,
+    expanding: true,
+  });
+});

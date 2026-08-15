@@ -25,6 +25,7 @@ import mimetypes
 import re
 import sys
 import time
+from copy import deepcopy
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,8 +51,14 @@ from lazyportfolio.scientific_study import (
 )
 from lazyportfolio.v2 import run_history as _run_history
 from lazyportfolio.v2 import store as _store
+from lazyportfolio.v2.adaptive_pruning import (
+    AdaptivePruningPolicy,
+    run_adaptive_pruning,
+    summarize_pruning_decisions,
+)
 from lazyportfolio.v2.mode import mode_from_config as _mode_from_config
 from lazyportfolio.v2.store import _as_json
+from lazyportfolio.v2.tree_pruning import rule_payload
 from project.advisor import api as _advisor_api
 from project.advisor import jobs as _advisor_jobs
 from project.advisor import services as _advisor_services
@@ -141,6 +148,8 @@ def _run_summary_fields(path: str, payload: dict[str, Any]) -> tuple[Any, Any]:
         return None, (payload.get("report") or {}).get("metrics")
     if path == "/api/v2/scientific-study":
         return None, payload.get("metrics")
+    if path == "/api/v2/adaptive-pruning":
+        return payload.get("terminal_weights"), payload.get("metrics")
     return None, None
 
 
@@ -176,6 +185,26 @@ def _scientific_study_settings(config: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(settings, dict) or not settings.get("enabled"):
         return None
     return settings
+
+
+def _adaptive_pruning_policy(config: dict[str, Any]) -> AdaptivePruningPolicy:
+    """Return the backend policy selected in Tree Studio.
+
+    The browser only edits this closed schema. Validation and defaults live
+    in ``lazyportfolio.v2.adaptive_pruning`` so scheduled jobs and the UI
+    cannot interpret the same controls differently.
+    """
+
+    backtest = config.get("backtest") if isinstance(config.get("backtest"), dict) else {}
+    settings = backtest.get("adaptive_pruning")
+    if not isinstance(settings, dict) or settings.get("enabled") is not True:
+        raise StudioConfigError(
+            "adaptive pruning is not enabled: select it in Data and backtest"
+        )
+    try:
+        return AdaptivePruningPolicy.from_mapping(settings)
+    except (TypeError, ValueError) as exc:
+        raise StudioConfigError(str(exc)) from exc
 
 
 def _scientific_study_result(
@@ -291,9 +320,14 @@ def _raw_backtest_key(
     config: dict[str, Any], *, capture_audit_series: bool, expanding: bool = False
 ) -> str:
     _, data_fingerprint = _data_fingerprint(config)
+    calculation_config = deepcopy(config)
+    calculation_backtest = calculation_config.get("backtest")
+    if isinstance(calculation_backtest, dict):
+        calculation_backtest.pop("adaptive_pruning", None)
+        calculation_backtest.pop("scientific_study", None)
     path = "/api/v2/raw-backtest" + ("/with-series" if capture_audit_series else "")
     path += "/expanding" if expanding else ""
-    return _cache_key(path, _config_hash(config), data_fingerprint)
+    return _cache_key(path, _config_hash(calculation_config), data_fingerprint)
 
 
 def _run_full_backtest(
@@ -385,6 +419,43 @@ def _v2_backtest_payload(config: dict[str, Any]) -> dict[str, Any]:
                 if node.proxy is not None
             },
         },
+    }
+
+
+def _v2_adaptive_pruning_payload(config: dict[str, Any]) -> dict[str, Any]:
+    """Run adaptive pruning through the public backend implementation."""
+
+    policy = _adaptive_pruning_policy(config)
+    model, dataset, reference_report = _run_full_backtest(
+        config,
+        capture_audit_series=False,
+        max_workers=policy.workers,
+        expanding=policy.expanding,
+    )
+    result = run_adaptive_pruning(
+        config,
+        model=model,
+        dataset=dataset,
+        reference_report=reference_report,
+        mode=_v2_mode(config),
+        policy=policy,
+    )
+    return {
+        "ok": True,
+        "engine": "adaptive-pruning-v2",
+        "policy": policy.payload(),
+        "rule": rule_payload(result.rule),
+        "burn_in_cutoff": result.burn_in_cutoff,
+        "fold_count": len(result.report.folds),
+        "metrics": result.report.metrics,
+        "curves": {
+            name: _chart_curve(series) for name, series in result.report.curves.items()
+        },
+        "decisions": result.decisions,
+        "decision_summary": summarize_pruning_decisions(result.decisions),
+        "last_candidate": result.last_candidate,
+        "terminal_weights": result.estimate.terminal_weights,
+        "metadata": dataset.metadata,
     }
 
 
@@ -852,7 +923,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             config = payload
             if path == "/api/validate":
                 self._json(HTTPStatus.OK, _v2_validation_payload(config))
-            elif path in {"/api/v2/estimate", "/api/v2/backtest", "/api/v2/scientific-study"}:
+            elif path in {
+                "/api/v2/estimate",
+                "/api/v2/backtest",
+                "/api/v2/scientific-study",
+                "/api/v2/adaptive-pruning",
+            }:
                 config_hash = _config_hash(config)
                 data_as_of, data_fingerprint = _data_fingerprint(config)
                 key = _cache_key(path, config_hash, data_fingerprint)
@@ -874,6 +950,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                     "/api/v2/estimate": _v2_estimate_payload,
                     "/api/v2/backtest": _v2_backtest_payload,
                     "/api/v2/scientific-study": _v2_scientific_study_payload,
+                    "/api/v2/adaptive-pruning": _v2_adaptive_pruning_payload,
                 }[path]
                 payload = _as_json(producer(config))
                 with self._cache_lock:

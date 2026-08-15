@@ -311,14 +311,15 @@ def _evaluate_and_send_adaptive_pruning(name: str, *, max_workers: int,
     ``expanding=False`` (the ``run()`` default) so the reference walk-forward
     inside ``evaluate_adaptive_pruning`` hits ``_run_full_backtest``'s
     in-memory cache from this job's own ``run_variant(name, expanding=False)``
-    call above instead of recomputing it. A failure here must never take
-    down the job that already durably saved the rolling/expanding results.
+    call above instead of recomputing it. Pruning is configured work for a
+    ``--pruning-tree``: failure must propagate so the scheduler cannot report
+    success while the pruning result is missing.
     """
-    try:
-        payload = evaluate_adaptive_pruning(name, workers=max_workers, evidence_window_years=None)
-    except Exception as exc:  # noqa: BLE001 -- pruning evidence is a bonus, never fatal to the job
-        _log(f"{name!r}: adaptive pruning failed ({type(exc).__name__}: {exc}), continuing")
-        return
+    payload = evaluate_adaptive_pruning(
+        name,
+        workers=max_workers,
+        evidence_window_years=None,
+    )
     final = payload["metrics"].get("FINAL", {})
     static = payload["metrics"].get("STATIC_FINAL", {})
     _log(
