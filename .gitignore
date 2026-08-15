@@ -19,3 +19,15 @@ node_modules/
 htmlcov/
 reports/tree_studio/exports/
 .DS_Store
+
+# I file di servizio di SQLite in WAL. `*.sqlite3` era gia' ignorato, i suoi
+# due compagni no, e restano sul disco fra una corsa e l'altra.
+*.sqlite3-shm
+*.sqlite3-wal
+*.db-shm
+*.db-wal
+# I log delle corse di Tree Studio. Non `reports/tree_studio/` per intero: li'
+# sotto vivono venti modelli tracciati, che sono il contenuto e non lo scarto.
+reports/tree_studio/*.log
+reports/tree_studio/*.err.log
+reports/tree_studio/*.out.log
