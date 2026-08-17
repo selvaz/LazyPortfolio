@@ -61,6 +61,18 @@ def config_instruments(model: V2Model) -> list[str]:
     )
 
 
+def _normalized_symbols(instruments: list[str]) -> list[str]:
+    """The one normalization rule both fingerprint entry points share:
+    strip any ``namespace:`` prefix, uppercase, dedupe, sort. Factored out
+    so `data_fingerprint` and `recompute_snapshot_fingerprint` cannot drift
+    against each other by editing one copy and not the other.
+    """
+
+    return sorted(
+        {instrument.split(":", 1)[-1].strip().upper() for instrument in instruments if instrument}
+    )
+
+
 def _coverage_fingerprint(symbols: list[str]) -> tuple[str | None, str]:
     """Query live ``coverage_report`` for ``symbols`` and hash the rows.
 
@@ -113,13 +125,7 @@ def data_fingerprint(config: dict[str, Any]) -> tuple[str | None, str]:
         model = V2Model.from_config(config)
     except (KeyError, TypeError, ValueError):
         return None, "invalid-config"
-    symbols = sorted(
-        {
-            instrument.split(":", 1)[-1].strip().upper()
-            for instrument in config_instruments(model)
-            if instrument
-        }
-    )
+    symbols = _normalized_symbols(config_instruments(model))
     if not symbols:
         return None, "no-instruments"
     return _coverage_fingerprint(symbols)
@@ -139,13 +145,7 @@ def recompute_snapshot_fingerprint(snapshot: SnapshotDescriptor) -> str:
     ``_trust_stored_fingerprint`` default deliberately.
     """
 
-    symbols = sorted(
-        {
-            instrument.split(":", 1)[-1].strip().upper()
-            for instrument in snapshot.universe
-            if instrument
-        }
-    )
+    symbols = _normalized_symbols(snapshot.universe)
     _as_of, fingerprint = _coverage_fingerprint(symbols)
     return fingerprint
 

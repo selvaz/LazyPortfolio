@@ -133,27 +133,32 @@ class _FakeCoverageCursor:
 class _FakeCoverageConn:
     """Stands in for market_data_hub.db.connection.get_conn(read_only=True).
 
-    Ignores the query text (both data_fingerprint and
-    recompute_snapshot_fingerprint issue the identical parameterised SELECT
-    -- see _coverage_fingerprint) and returns pre-set rows regardless of the
-    ``symbols`` filter, so the test controls exactly what "live data" looks
-    like instead of depending on whatever market-data-hub happens to have.
+    Returns pre-set rows regardless of the ``symbols`` filter, so the test
+    controls exactly what "live data" looks like instead of depending on
+    whatever market-data-hub happens to have -- but records the query
+    params so a test CAN assert on exactly which symbols were queried,
+    proving both fingerprint entry points normalize to the same set rather
+    than merely reaching the same code path.
     """
 
     def __init__(self, rows: list[tuple]) -> None:
         self._rows = rows
+        self.queried_params: list[object] = []
 
-    def execute(self, _sql: str, _params: object) -> _FakeCoverageCursor:
+    def execute(self, _sql: str, params: object) -> _FakeCoverageCursor:
+        self.queried_params.append(params)
         return _FakeCoverageCursor(self._rows)
 
     def close(self) -> None:
         pass
 
 
-def _patch_coverage(monkeypatch: pytest.MonkeyPatch, rows: list[tuple]) -> None:
+def _patch_coverage(monkeypatch: pytest.MonkeyPatch, rows: list[tuple]) -> _FakeCoverageConn:
     import market_data_hub.db.connection as hub_connection
 
-    monkeypatch.setattr(hub_connection, "get_conn", lambda read_only=True: _FakeCoverageConn(rows))
+    conn = _FakeCoverageConn(rows)
+    monkeypatch.setattr(hub_connection, "get_conn", lambda read_only=True: conn)
+    return conn
 
 
 def test_recompute_snapshot_fingerprint_detects_real_coverage_changes(
@@ -206,9 +211,12 @@ def test_data_fingerprint_and_recompute_agree_on_the_same_controlled_rows(
     a legitimately unchanged proposal would look stale at approval time."""
 
     rows = [("AAA", "2026-08-15", 500, "run-1"), ("BBB", "2026-08-15", 500, "run-1")]
-    _patch_coverage(monkeypatch, rows)
+    conn = _patch_coverage(monkeypatch, rows)
 
     _as_of, from_config = snapshot.data_fingerprint(_config())
+    assert conn.queried_params[-1] == ["AAA", "BBB"], (
+        "data_fingerprint must query the normalized (uppercased, stripped) symbols"
+    )
 
     descriptor = SnapshotDescriptor(
         schema_version="1.0",
@@ -221,6 +229,10 @@ def test_data_fingerprint_and_recompute_agree_on_the_same_controlled_rows(
         fingerprint="unused",
     )
     from_descriptor = snapshot.recompute_snapshot_fingerprint(descriptor)
+    assert conn.queried_params[-1] == ["AAA", "BBB"], (
+        "recompute_snapshot_fingerprint must query the SAME normalized symbols as "
+        "data_fingerprint, not just reach the same code path"
+    )
 
     assert from_config == from_descriptor
 
