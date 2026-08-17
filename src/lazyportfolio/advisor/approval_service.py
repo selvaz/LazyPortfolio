@@ -7,6 +7,14 @@ server-side patch reconstruction, data-fingerprint recheck, apply the patch
 on a copy and validate the full ``V2Model``, insert the new revision, CAS
 the head, insert the approval + outbox event, commit. A stale revision or
 stale snapshot both expire the proposal rather than silently reusing it.
+
+Step 1's status read is advisory, not a lock: sqlite only opens an implicit
+transaction at the first write (step 8), so a concurrent ``reject_proposal``
+can commit between step 1 and step 8. The proposal-status UPDATE inside
+step 10 is therefore the real guard -- like step 9's head CAS, it re-checks
+``status = 'pending_approval'`` at write time and rolls back the whole
+transaction (including the revision insert and head move already staged)
+if a concurrent writer got there first.
 """
 
 from __future__ import annotations
@@ -203,11 +211,31 @@ def apply_proposal(
                 json.dumps({"new_revision_id": new_revision_id, "approval_id": approval_id}),
             ),
         )
-        conn.execute(
+        # Guarded like step 9's head CAS: the proposal's status is re-verified
+        # atomically at write time, not trusted from step 1's read. Without
+        # this check, a concurrent reject_proposal() committing between step 1
+        # and here would leave this UPDATE silently affecting zero rows while
+        # the revision (step 8) and head move (step 9) had already gone
+        # through -- a rejected proposal's changes applied anyway.
+        status_cursor = conn.execute(
             "UPDATE change_proposals SET status = 'applied' "
             "WHERE proposal_id = ? AND status = 'pending_approval'",
             (str(proposal_id),),
         )
+        if status_cursor.rowcount != 1:
+            # A concurrent writer (e.g. reject_proposal) changed the status
+            # between step 1's read and this write. Read back the actual
+            # current status -- ProposalNotPendingApproval.status is meant
+            # to hold a real status value everywhere else it's raised, and
+            # callers may inspect it.
+            current_status_row = conn.execute(
+                "SELECT status FROM change_proposals WHERE proposal_id = ?",
+                (str(proposal_id),),
+            ).fetchone()
+            conn.rollback()
+            raise ProposalNotPendingApproval(
+                current_status_row[0] if current_status_row else "unknown"
+            )
         conn.execute(
             "INSERT INTO outbox_events (event_id, aggregate_type, aggregate_id, event_type, "
             "payload_json, created_at, delivered_at) "

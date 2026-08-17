@@ -332,13 +332,20 @@ def approve_proposal(
     never re-derived here from the stored row -- comparing a value against
     itself would defeat §8.3 step 2's whole purpose: catching a proposal
     that changed between when the UI displayed it and when the user clicked
-    approve."""
+    approve.
+
+    Passes the real ``recompute_snapshot_fingerprint`` (Fase 2's
+    ``SnapshotService``) so this, the actual HTTP-reachable approval path,
+    rechecks live market data rather than trusting the stored snapshot's own
+    fingerprint back at itself -- ``apply_proposal``'s bare default
+    (``_trust_stored_fingerprint``) is for fixture-driven tests only."""
 
     return approval_service.apply_proposal(
         proposal_id,
         proposal_hash=proposal_hash,
         approved_by=approved_by,
         idempotency_key=idempotency_key,
+        recompute_fingerprint=snapshot_service.recompute_snapshot_fingerprint,
         db_path=db_path,
     )
 

@@ -6,12 +6,14 @@ than creating a second revision."""
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 
+from lazyportfolio.advisor import approval_service
 from lazyportfolio.advisor.approval_service import (
     ApprovalHashMismatch,
     ProposalExpired,
@@ -312,3 +314,114 @@ def test_retrying_the_same_idempotency_key_returns_the_same_result_not_a_new_rev
     head = get_head(tree.tree_id, db_path=db_path)
     assert head is not None
     assert head.revision_id == first.new_revision_id  # only ever advanced once
+
+
+def test_a_concurrent_reject_between_the_status_read_and_the_write_wins(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression for a real race: step 1 reads status='pending_approval',
+    but sqlite only opens an implicit transaction at the first WRITE
+    (step 8) -- so a reject_proposal() committing in that window must stop
+    the apply, not lose to it. validate_patch() runs at step 5, strictly
+    between the read and the first write, so patching it to also perform
+    the concurrent reject (via a SEPARATE connection, exactly as a second
+    process/request would) reproduces the real interleaving deterministically
+    instead of relying on thread timing."""
+
+    db_path = tmp_path / "db.sqlite3"
+    tree = create_tree(_base_config(), actor_type="human", actor_id="local-user", db_path=db_path)
+    proposal = _pending_proposal(
+        tree_id=UUID(tree.tree_id), base_revision_id=tree.revision_id, db_path=db_path
+    )
+
+    real_validate_patch = approval_service.validate_patch
+
+    def _validate_then_concurrent_reject(patch: object, node_id: str) -> None:
+        real_validate_patch(patch, node_id)  # type: ignore[arg-type]
+        # A second connection, exactly as reject_proposal()'s own separate
+        # call would use -- and it commits before this function's caller
+        # (apply_proposal) has made ANY write, so nothing blocks it.
+        other_conn = sqlite3.connect(str(db_path))
+        try:
+            other_conn.execute(
+                "UPDATE change_proposals SET status = 'rejected' WHERE proposal_id = ?",
+                (str(proposal.id),),
+            )
+            other_conn.commit()
+        finally:
+            other_conn.close()
+
+    monkeypatch.setattr(approval_service, "validate_patch", _validate_then_concurrent_reject)
+
+    with pytest.raises(ProposalNotPendingApproval) as excinfo:
+        apply_proposal(
+            proposal.id,
+            proposal_hash=proposal.content_hash,
+            approved_by="local-user",
+            idempotency_key="race-key",
+            db_path=db_path,
+        )
+    assert excinfo.value.status == "rejected"  # the real current status, not prose
+
+    # The whole transaction must have rolled back -- not just the final
+    # status write. A partial apply (revision inserted, head moved, but
+    # proposal left 'rejected') would be worse than a clean failure: check
+    # every write step 8-10 staged, not just the head, so a bug that rolls
+    # back the head but leaves an orphan revision/approval/outbox row can't
+    # hide behind this test.
+    head = get_head(tree.tree_id, db_path=db_path)
+    assert head is not None
+    assert head.revision_id == tree.revision_id  # unchanged
+    fetched = get_proposal(proposal.id, db_path=db_path)
+    assert fetched is not None
+    assert fetched.status == "rejected"  # the concurrent reject, untouched
+
+    check_conn = sqlite3.connect(str(db_path))
+    try:
+        revisions = check_conn.execute(
+            "SELECT COUNT(*) FROM tree_revisions WHERE tree_id = ?", (str(tree.tree_id),)
+        ).fetchone()[0]
+        approvals = check_conn.execute(
+            "SELECT COUNT(*) FROM proposal_approvals WHERE proposal_id = ?",
+            (str(proposal.id),),
+        ).fetchone()[0]
+        outbox = check_conn.execute("SELECT COUNT(*) FROM outbox_events").fetchone()[0]
+    finally:
+        check_conn.close()
+    assert revisions == 1, "no orphan tree_revisions row from the rolled-back insert"
+    assert approvals == 0, "no orphan proposal_approvals row from the rolled-back insert"
+    assert outbox == 0, "no orphan outbox_events row from the rolled-back insert"
+
+
+def test_services_approve_proposal_wires_a_real_fingerprint_recheck(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """project/advisor/services.py:approve_proposal is the actual
+    HTTP-reachable approval path (project/advisor/api.py's only caller).
+    It must NOT fall back to apply_proposal's bare default
+    (_trust_stored_fingerprint, which always matches itself and can never
+    detect stale data) -- assert this by making the real recompute function
+    return a different value and checking the mismatch is actually seen."""
+
+    from project.advisor import services
+
+    from lazyportfolio.advisor import snapshot as snapshot_service
+
+    db_path = tmp_path / "db.sqlite3"
+    tree = create_tree(_base_config(), actor_type="human", actor_id="local-user", db_path=db_path)
+    proposal = _pending_proposal(
+        tree_id=UUID(tree.tree_id), base_revision_id=tree.revision_id, db_path=db_path
+    )
+
+    monkeypatch.setattr(
+        snapshot_service, "recompute_snapshot_fingerprint", lambda snapshot: "sha256:changed"
+    )
+
+    with pytest.raises(StaleDataError):
+        services.approve_proposal(
+            proposal.id,
+            proposal_hash=proposal.content_hash,
+            approved_by="local-user",
+            idempotency_key="wiring-key",
+            db_path=db_path,
+        )
