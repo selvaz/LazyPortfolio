@@ -6,13 +6,12 @@ than creating a second revision."""
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-
-import sqlite3
 
 from lazyportfolio.advisor import approval_service
 from lazyportfolio.advisor.approval_service import (
@@ -404,8 +403,9 @@ def test_services_approve_proposal_wires_a_real_fingerprint_recheck(
     detect stale data) -- assert this by making the real recompute function
     return a different value and checking the mismatch is actually seen."""
 
-    from lazyportfolio.advisor import snapshot as snapshot_service
     from project.advisor import services
+
+    from lazyportfolio.advisor import snapshot as snapshot_service
 
     db_path = tmp_path / "db.sqlite3"
     tree = create_tree(_base_config(), actor_type="human", actor_id="local-user", db_path=db_path)
