@@ -342,24 +342,44 @@ def significance_report(
     for candidate, baseline in comparisons:
         idx = curves[candidate].index.intersection(curves[baseline].index)
         common_index = idx if common_index is None else common_index.intersection(idx)
+    # Below this many observations there are no whole blocks left to
+    # resample: every draw reproduces the original series verbatim, so the CI
+    # collapses onto the point estimate and the p-value bottoms out at its
+    # bootstrap floor (1/(samples+1)) regardless of whether the difference is
+    # real -- less data reads as *more* certainty. Reported instead as a
+    # point difference with no CI/p-value, rather than a number that looks
+    # like a real test and is not one (D23 in
+    # ecosystem-cleanup/docs/deferred-fixes.md).
+    insufficient = len(common_index) <= block_size
     raw = []
     for candidate, baseline in comparisons:
         differences = (
             curves[candidate].loc[common_index].to_numpy(dtype=float)
             - curves[baseline].loc[common_index].to_numpy(dtype=float)
         )
+        mean_diff = float(np.mean(differences) * periods_per_year)
+        if insufficient:
+            raw.append((candidate, baseline, mean_diff, None, None, None))
+            continue
         low, high, p_value = paired_block_bootstrap(
             differences, samples=samples, block_size=block_size, random_seed=random_seed,
         )
-        raw.append((candidate, baseline, float(np.mean(differences) * periods_per_year), low * periods_per_year, high * periods_per_year, p_value))
-    adjusted = _holm_adjust([item[-1] for item in raw])
+        raw.append((candidate, baseline, mean_diff, low * periods_per_year, high * periods_per_year, p_value))
+    testable_indexes = [i for i, item in enumerate(raw) if item[-1] is not None]
+    holm_by_index = dict(zip(
+        testable_indexes, _holm_adjust([raw[i][-1] for i in testable_indexes]),
+    ))
     return [
         {
             "candidate": candidate, "baseline": baseline,
             "annualized_mean_difference": mean_diff, "ci_low": low, "ci_high": high,
-            "p_value": p_value, "holm_adjusted_p_value": holm_p,
+            "p_value": p_value,
+            "holm_adjusted_p_value": holm_by_index.get(i),
+            **({"note": "sample too small for the block bootstrap "
+                        f"(n_obs={len(common_index)} <= block_size={block_size}); "
+                        "showing the point difference only"} if insufficient else {}),
         }
-        for (candidate, baseline, mean_diff, low, high, p_value), holm_p in zip(raw, adjusted)
+        for i, (candidate, baseline, mean_diff, low, high, p_value) in enumerate(raw)
     ]
 
 
@@ -412,7 +432,13 @@ def sharpe_significance_report(
 
     rng = np.random.default_rng(random_seed)
     n_obs = len(common_index)
-    blocks_needed = int(np.ceil(n_obs / block_size))
+    # Same collapse as significance_report's block bootstrap, and the same
+    # reason: at or below one block there is nothing to resample but the
+    # original series, so the CI would pin to the point estimate and the
+    # p-value to its floor regardless of whether the gap is real (D23 in
+    # ecosystem-cleanup/docs/deferred-fixes.md).
+    insufficient = n_obs <= block_size
+    blocks_needed = int(np.ceil(n_obs / block_size)) if not insufficient else 0
     offsets = np.arange(block_size)
 
     results = []
@@ -420,6 +446,16 @@ def sharpe_significance_report(
         c = curves[candidate].loc[common_index].to_numpy(dtype=float)
         b = curves[baseline].loc[common_index].to_numpy(dtype=float)
         observed = _sharpe(c, periods_per_year) - _sharpe(b, periods_per_year)
+        if insufficient:
+            results.append({
+                "candidate": candidate, "baseline": baseline,
+                "sharpe_difference": observed, "ci_low": None, "ci_high": None,
+                "p_value": None,
+                "note": "sample too small for the block bootstrap "
+                        f"(n_obs={n_obs} <= block_size={block_size}); "
+                        "showing the point difference only",
+            })
+            continue
         diffs = np.empty(samples)
         for sample in range(samples):
             starts = rng.integers(0, n_obs, size=blocks_needed)
@@ -432,10 +468,12 @@ def sharpe_significance_report(
             "sharpe_difference": observed, "ci_low": float(low), "ci_high": float(high),
             "p_value": p_value,
         })
-    p_values = [item["p_value"] for item in results]
-    adjusted = _holm_adjust(p_values)
-    for item, holm_p in zip(results, adjusted):
-        item["holm_adjusted_p_value"] = holm_p
+    testable_indexes = [i for i, item in enumerate(results) if item["p_value"] is not None]
+    holm_by_index = dict(zip(
+        testable_indexes, _holm_adjust([results[i]["p_value"] for i in testable_indexes]),
+    ))
+    for i, item in enumerate(results):
+        item["holm_adjusted_p_value"] = holm_by_index.get(i)
     return results
 
 
