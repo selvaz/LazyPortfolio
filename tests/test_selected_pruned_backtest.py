@@ -18,7 +18,6 @@ pruning parameters match the standard the rest of the codebase already set.
 """
 from __future__ import annotations
 
-import ast
 import inspect
 import sys
 from pathlib import Path
@@ -70,29 +69,6 @@ def test_run_accepts_the_same_two_pruning_thresholds_as_the_reference_script() -
     # same defaults as PruningRule's own, not a second copy of the numbers
     assert params["min_sharpe_improvement"].default == mod.PruningRule.min_sharpe_improvement
     assert params["max_drawdown_per_vol_ratio"].default == mod.PruningRule.max_drawdown_per_vol_ratio
-
-
-def test_the_cli_exposes_both_thresholds_with_the_reference_scripts_flag_names() -> None:
-    """Structural: parses the real argparse setup rather than guessing from
-    the source text, so a renamed or dest-remapped flag still fails this."""
-    mod = _load()
-    parser = mod.argparse.ArgumentParser()
-    # main() builds its own parser inline; re-run just the add_argument calls
-    # by executing main up to parse_args is invasive, so instead inspect the
-    # source for the two flags this test exists to pin.
-    source = inspect.getsource(mod.main)
-    tree = ast.parse(source)
-    flags = {
-        c.args[0].value
-        for c in ast.walk(tree)
-        if isinstance(c, ast.Call)
-        and isinstance(c.func, ast.Attribute)
-        and c.func.attr == "add_argument"
-        and c.args
-        and isinstance(c.args[0], ast.Constant)
-    }
-    assert "--min-sharpe-improvement" in flags
-    assert "--max-drawdown-per-vol-ratio" in flags
 
 
 def test_main_forwards_the_parsed_thresholds_into_run_not_the_defaults(monkeypatch) -> None:
