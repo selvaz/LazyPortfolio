@@ -123,10 +123,28 @@ def _prepare_selected_pruned_fold(
     return selected_config, dict(selected_estimate.terminal_weights), candidate_config, decisions, final_estimate, forward_target
 
 
+def _burn_in_fold_targets(ref_fold) -> tuple[dict, dict]:
+    """Targets for a fold still in burn-in -- not run through selection/pruning.
+
+    Takes the fold object itself, not an index into some other folds list:
+    a previous version re-fetched it as ``base_reference.folds[i]``, where
+    ``i`` was the *local*, post-``max_folds``-slice loop index, while
+    ``base_reference.folds`` was the full, untruncated list -- silently
+    pulling an earlier fold's target once ``max_folds`` truncated the run.
+    ``ref_fold`` (from ``specs[i]``, already the right fold for this row) has
+    no such second list to drift out of sync with.
+    """
+    base_target = dict(ref_fold.targets["FINAL"])
+    forward_target = dict(ref_fold.targets.get("FORWARD_FINAL", base_target))
+    return base_target, forward_target
+
+
 def run(
     base: str, profiles: list[str], *, expanding: bool = False, max_folds: int | None = None,
     workers: int = 1, burn_in_years: float = DEFAULT_BURN_IN_YEARS,
     evidence_window_years: float | None = None, rebalance_frequency: str | None = None,
+    min_sharpe_improvement: float = PruningRule.min_sharpe_improvement,
+    max_drawdown_per_vol_ratio: float = PruningRule.max_drawdown_per_vol_ratio,
 ):
     base_config = store.read_model(base)
     profile_configs = {name: store.read_model(name) for name in profiles}
@@ -154,7 +172,19 @@ def run(
     # stays restricted to non-root nodes (``node_names`` above): the root
     # can never be contracted into a parent it doesn't have.
     selection_node_names = [node.name for node in model.root.walk()]
-    rule = PruningRule(required_protocols=("accumulated",))
+    # `required_protocols` differs from adaptive_pruning_backtest.py's default
+    # ("rolling", "expanding"): this script computes one continuous
+    # accumulated-evidence stream per profile, not two parallel protocols, so
+    # there is nothing else to require. The two thresholds below are the same
+    # fitting parameters as that script, at the same defaults, and settable
+    # the same way -- pruning is one mechanism with one set of knobs, used
+    # here on evidence borrowed from whichever profile is currently winning
+    # a node rather than on the tree's own single track record.
+    rule = PruningRule(
+        required_protocols=("accumulated",),
+        min_sharpe_improvement=min_sharpe_improvement,
+        max_drawdown_per_vol_ratio=max_drawdown_per_vol_ratio,
+    )
     ppy = _annualization_factor(freq)
 
     # One reference walk-forward PER profile, each over the whole available
@@ -223,10 +253,9 @@ def run(
             candidate_nodes = len(candidate_config["nodes"])
         else:
             chosen, fold_decisions = {}, []
-            base_target = dict((base_reference.folds[i] if base_reference else ref_fold).targets["FINAL"])
+            base_target, forward_target = _burn_in_fold_targets(ref_fold)
             selected_target = base_target
             final_target = base_target
-            forward_target = dict((base_reference.folds[i] if base_reference else ref_fold).targets.get("FORWARD_FINAL", base_target))
             audits = dict(ref_fold.audits)
             candidate_nodes = len(base_config["nodes"])
         targets_this_fold = {"SELECTED": selected_target, "FINAL": final_target, "FORWARD_FINAL": forward_target}
@@ -270,6 +299,8 @@ def main():
     p.add_argument("--max-folds", type=int)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--burn-in-years", type=float, default=DEFAULT_BURN_IN_YEARS)
+    p.add_argument("--min-sharpe-improvement", type=float, default=PruningRule.min_sharpe_improvement)
+    p.add_argument("--max-drawdown-per-vol-ratio", type=float, default=PruningRule.max_drawdown_per_vol_ratio)
     p.add_argument(
         "--evidence-window-years", type=float, default=None,
         help="rolling lookback (years) for profile-selection and pruning evidence; default: everything since burn-in (pure expanding)",
@@ -283,6 +314,8 @@ def main():
         args.base, args.profiles, expanding=args.expanding, max_folds=args.max_folds,
         workers=args.workers, burn_in_years=args.burn_in_years,
         evidence_window_years=args.evidence_window_years, rebalance_frequency=args.rebalance_frequency,
+        min_sharpe_improvement=args.min_sharpe_improvement,
+        max_drawdown_per_vol_ratio=args.max_drawdown_per_vol_ratio,
     )
     base_config = store.read_model(args.base)
     if args.rebalance_frequency:
