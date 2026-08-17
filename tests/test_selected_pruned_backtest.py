@@ -67,8 +67,9 @@ def test_run_accepts_the_same_two_pruning_thresholds_as_the_reference_script() -
     assert "min_sharpe_improvement" in params
     assert "max_drawdown_per_vol_ratio" in params
     # same defaults as PruningRule's own, not a second copy of the numbers
-    assert params["min_sharpe_improvement"].default == mod.PruningRule.min_sharpe_improvement
-    assert params["max_drawdown_per_vol_ratio"].default == mod.PruningRule.max_drawdown_per_vol_ratio
+    rule_defaults = mod.PruningRule
+    assert params["min_sharpe_improvement"].default == rule_defaults.min_sharpe_improvement
+    assert params["max_drawdown_per_vol_ratio"].default == rule_defaults.max_drawdown_per_vol_ratio
 
 
 def test_main_forwards_the_parsed_thresholds_into_run_not_the_defaults(monkeypatch) -> None:
