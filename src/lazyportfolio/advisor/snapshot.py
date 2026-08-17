@@ -61,26 +61,20 @@ def config_instruments(model: V2Model) -> list[str]:
     )
 
 
-def data_fingerprint(config: dict[str, Any]) -> tuple[str | None, str]:
-    """Cheap freshness signal for the instruments a tree config references.
+def _coverage_fingerprint(symbols: list[str]) -> tuple[str | None, str]:
+    """Query live ``coverage_report`` for ``symbols`` and hash the rows.
 
-    Byte-for-byte identical to the former
-    ``project/tree_studio.py:_data_fingerprint`` -- see that function's
-    original docstring for the coverage_report/degradation rationale, which
-    still applies unchanged here.
+    Shared by :func:`data_fingerprint` (which derives ``symbols`` from a
+    tree config) and :func:`recompute_snapshot_fingerprint` (which derives
+    them from an already-built :class:`~lazyportfolio.advisor.contracts.SnapshotDescriptor`
+    -- approval time has no tree config to rebuild a ``V2Model`` from, only
+    the descriptor's own ``universe``). Fails soft with a deterministic
+    sentinel string, never raises: a proposal drafted before market-data-hub
+    was configured (fixture-driven dev/test use) must compare equal to
+    itself at approval time, not spuriously block on unrelated
+    infrastructure absence.
     """
 
-    try:
-        model = V2Model.from_config(config)
-    except (KeyError, TypeError, ValueError):
-        return None, "invalid-config"
-    symbols = sorted(
-        {
-            instrument.split(":", 1)[-1].strip().upper()
-            for instrument in config_instruments(model)
-            if instrument
-        }
-    )
     if not symbols:
         return None, "no-instruments"
     try:
@@ -104,6 +98,56 @@ def data_fingerprint(config: dict[str, Any]) -> tuple[str | None, str]:
     canonical = json.dumps([[str(value) for value in row] for row in rows], separators=(",", ":"))
     fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return as_of, fingerprint
+
+
+def data_fingerprint(config: dict[str, Any]) -> tuple[str | None, str]:
+    """Cheap freshness signal for the instruments a tree config references.
+
+    Byte-for-byte identical to the former
+    ``project/tree_studio.py:_data_fingerprint`` -- see that function's
+    original docstring for the coverage_report/degradation rationale, which
+    still applies unchanged here.
+    """
+
+    try:
+        model = V2Model.from_config(config)
+    except (KeyError, TypeError, ValueError):
+        return None, "invalid-config"
+    symbols = sorted(
+        {
+            instrument.split(":", 1)[-1].strip().upper()
+            for instrument in config_instruments(model)
+            if instrument
+        }
+    )
+    if not symbols:
+        return None, "no-instruments"
+    return _coverage_fingerprint(symbols)
+
+
+def recompute_snapshot_fingerprint(snapshot: SnapshotDescriptor) -> str:
+    """The real ``recompute_fingerprint`` implementation for approval time
+    (docs/adr/0001-node-advisor-architecture.md Fase 2 ``SnapshotService``).
+
+    Re-derives the same coverage-based fingerprint :func:`data_fingerprint`
+    computed when the proposal was drafted, from ``snapshot.universe``
+    instead of a tree config (approval time has no config to rebuild a
+    ``V2Model`` from). Wired at the ``project/advisor/services.py`` layer,
+    not as :func:`~lazyportfolio.advisor.approval_service.apply_proposal`'s
+    default -- fixture-driven tests that call ``apply_proposal`` directly
+    with no market-data-hub configured keep using the Fase 1
+    ``_trust_stored_fingerprint`` default deliberately.
+    """
+
+    symbols = sorted(
+        {
+            instrument.split(":", 1)[-1].strip().upper()
+            for instrument in snapshot.universe
+            if instrument
+        }
+    )
+    _as_of, fingerprint = _coverage_fingerprint(symbols)
+    return fingerprint
 
 
 def load_dataset(
@@ -200,4 +244,5 @@ __all__ = [
     "data_fingerprint",
     "load_dataset",
     "load_snapshot",
+    "recompute_snapshot_fingerprint",
 ]
