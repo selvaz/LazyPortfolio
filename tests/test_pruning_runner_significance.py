@@ -76,7 +76,10 @@ def test_significance_report_holm_adjustment_ignores_untestable_comparisons():
 
 @pytest.mark.parametrize("n_obs", [4, 10, 20])
 def test_sharpe_significance_report_omits_ci_and_p_value_at_or_below_block_size(n_obs):
-    report = sharpe_significance_report(_curves(n_obs), [("CANDIDATE", "BASELINE")], block_size=4)[0]
+    reports = sharpe_significance_report(
+        _curves(n_obs), [("CANDIDATE", "BASELINE")], block_size=4,
+    )
+    report = reports[0]
     if n_obs <= 4:
         assert report["ci_low"] is None
         assert report["ci_high"] is None
