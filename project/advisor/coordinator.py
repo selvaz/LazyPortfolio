@@ -19,9 +19,13 @@ therefore owns (all three surfaced in a pre-implementation review):
   that window is minutes wide, so a turn could reason against R1 and persist
   against R2 with nothing noticing. The coordinator pins one revision and
   re-checks it immediately before every write.
-* **Per-turn node dedup.** A node is reachable both directly and through an
-  ancestor's delegation; without dedup one turn can file two competing
-  proposals for it, of which at most one is ever approvable.
+* **One proposal per turn.** Every proposal a turn creates records the same
+  base revision, so approving one advances the head and every other one then
+  fails approval's base-vs-head check. Filing several would mean putting
+  cards on screen that are already impossible to apply, so the first
+  ``propose`` wins the turn and later ones are reported back to the
+  coordinator to mention in its answer. (This also subsumes the narrower
+  problem of one node being reachable both directly and via an ancestor.)
 * **A budget that survives concurrency.** Whether one model response's tool
   calls are dispatched concurrently is a LazyBridge implementation detail,
   so the budget is reserved atomically rather than assuming they are not.
@@ -66,7 +70,12 @@ SYSTEM_PROMPT = (
     "counterfactual evaluation, a pending-approval state and an explicit human "
     "approval before the tree can change. Consult a node only when it "
     "materially helps answer the request: consultation capacity is shared "
-    "across the whole turn and is finite. Tree BUILDING is separate and "
+    "across the whole turn and is finite. AT MOST ONE proposal can be created "
+    "per turn, across all nodes -- proposals made in one turn share a base "
+    "revision, and approving one makes the others impossible to apply. So "
+    "choose the single most important node to propose on; if another node also "
+    "needs a change, say so in your answer and let the human ask for it next, "
+    "after approving or rejecting this one. Tree BUILDING is separate and "
     "pre-onboarding -- the tree-builder specialist only transforms a draft "
     "config in memory; it cannot save it, cannot touch an onboarded tree, and "
     "the human must still review and save the draft. Never describe a draft as "
@@ -334,19 +343,33 @@ def _build_consult_tool(
                 )
                 return {"node_id": node_id, "route": "refused", "message": refusal}
 
+            # One proposal per turn, across every node -- not one per node.
+            # Proposals created in the same turn all record the same base
+            # revision, so approving any one of them advances the head and
+            # every sibling then fails approval's base-vs-head check. Filing
+            # them anyway would put cards on screen that are already
+            # impossible to apply. The second node's finding is reported to
+            # the coordinator instead, for the human to ask about next.
             with budget.lock:
-                duplicate = node_id in seen_nodes
-                if not duplicate:
+                already = next(iter(seen_nodes), None)
+                if already is None:
                     seen_nodes.add(node_id)
-            if duplicate:
+            if already is not None:
                 refusal = (
-                    f"node {node_id} already produced a proposal in this turn; "
-                    "at most one of several proposals sharing a base revision "
-                    "is ever approvable"
+                    f"a proposal was already created for node {already} in this turn, "
+                    "and two proposals sharing one base revision cannot both be "
+                    f"approved. Report this finding for {node_id} in your answer and "
+                    "let the human ask for it in a new turn."
                 )
                 _audit(
                     conversation_id,
-                    {**event, "status": "refused_duplicate_node", "message": refusal},
+                    {
+                        **event,
+                        "status": "refused_second_proposal_in_turn",
+                        "message": refusal,
+                        "already_proposed_node_id": already,
+                        "withheld_views": [v.model_dump() for v in result.proposed_views],
+                    },
                     pinned_revision_id=pinned_revision_id,
                     db_path=db_path,
                     best_effort=True,

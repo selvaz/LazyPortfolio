@@ -284,7 +284,19 @@ def create_proposal(
     payload = draft.model_dump(mode="json", exclude={"content_hash"})
     proposal = draft.model_copy(update={"content_hash": content_hash(payload)})
 
-    proposals.create(proposal, status="drafting", db_path=db_path)
+    try:
+        proposals.create(
+            proposal,
+            status="drafting",
+            require_head_revision_id=expected_revision_id,
+            db_path=db_path,
+        )
+    except proposals.StaleBaseRevisionOnCreate as exc:
+        # The database refused the insert because the head moved between the
+        # last check and this write. Re-raised as this module's own stale
+        # error so every caller sees one exception type for "the tree moved",
+        # whichever of the three checks caught it.
+        raise StaleBaseRevision(str(exc)) from exc
     proposals.transition(proposal.id, "drafting", "pending_approval", db_path=db_path)
     return proposal
 

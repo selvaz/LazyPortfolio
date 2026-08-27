@@ -330,26 +330,78 @@ def test_a_tree_that_moved_mid_turn_refuses_to_persist(
     assert services.list_proposals(revision.tree_id, db_path=store_path) == []
 
 
-def test_the_same_node_cannot_produce_two_proposals_in_one_turn(
+def test_only_one_proposal_is_created_per_turn_even_across_nodes(
     monkeypatch, tree, conversation, frame
 ) -> None:
-    """A node is reachable both directly and through an ancestor's
-    delegation. Two proposals sharing one base revision are not both
-    approvable, so the second is refused rather than filed."""
+    """Proposals from one turn share a base revision, so approving one makes
+    the rest impossible to apply. A second one is refused rather than filed as
+    a card that could never be approved -- and that holds for a *different*
+    node, not only for a repeat of the same one."""
 
     revision, store_path = tree
     monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _propose_result())
     seen: set[str] = set()
-    tool = _build(tree, conversation, seen_nodes=seen, backend=_FakeBackend(frame))
+    backend = _FakeBackend(frame)
+    equity = _build(tree, conversation, seen_nodes=seen, backend=backend)
+    bond = _build(tree, conversation, node_id="bond", seen_nodes=seen, backend=backend)
 
-    first = tool.func("propose something")
-    second = tool.func("propose something else")
+    first = equity.func("propose something")
+    same_node_again = equity.func("propose something else")
+    other_node = bond.func("propose something here too")
 
     assert first["route"] == "propose"
     assert first["proposal_id"]
-    assert second["route"] == "refused"
-    assert "already produced a proposal" in second["message"]
+    assert same_node_again["route"] == "refused"
+    assert other_node["route"] == "refused"
+    assert "already created for node equity" in other_node["message"]
     assert len(services.list_proposals(revision.tree_id, db_path=store_path)) == 1
+
+
+def test_the_insert_itself_refuses_a_head_that_moved(monkeypatch, tree, frame) -> None:
+    """The last window is between the final check and the insert. It is closed
+    by the database evaluating the head in the same statement, so a caller
+    cannot lose that race however carefully it checks first."""
+
+    from lazyportfolio.advisor import proposal_repository
+
+    revision, store_path = tree
+    real_transition = proposal_repository.transition
+    moved: dict[str, str] = {}
+
+    # Move the head after every pre-insert check has passed, by hooking the
+    # last thing that runs before it.
+    real_content_hash = services.content_hash
+
+    def _move_then_hash(payload: Any) -> str:
+        if not moved:
+            new = save_revision(
+                revision.tree_id,
+                _config(),
+                actor_type="human",
+                actor_id="concurrent-editor",
+                db_path=store_path,
+            )
+            moved["revision_id"] = new.revision_id
+        return real_content_hash(payload)
+
+    monkeypatch.setattr(services, "content_hash", _move_then_hash)
+
+    with pytest.raises(services.StaleBaseRevision, match="no longer at revision"):
+        services.create_proposal(
+            revision.tree_id,
+            "equity",
+            [{"instruments": {"ticker:SPY": 1.0, "ticker:TLT": -1.0},
+              "expected_return": 0.03, "confidence": 0.6, "source": "test",
+              "rationale": "test"}],
+            caller_id="test",
+            expected_revision_id=revision.revision_id,
+            backend=_FakeBackend(frame),
+            db_path=store_path,
+        )
+
+    assert moved, "the test did not actually move the head"
+    assert services.list_proposals(revision.tree_id, db_path=store_path) == []
+    assert proposal_repository.transition is real_transition
 
 
 def test_an_explain_turn_files_nothing_but_is_still_audited(

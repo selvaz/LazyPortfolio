@@ -33,41 +33,75 @@ class ProposalRecord:
     created_at: str
 
 
+class StaleBaseRevisionOnCreate(RuntimeError):
+    """The tree head moved away from ``require_head_revision_id`` before the insert."""
+
+
 def create(
     proposal: ChangeProposal,
     *,
     status: ProposalStatus = "drafting",
+    require_head_revision_id: str | None = None,
     db_path: str | os.PathLike[str] | None = None,
 ) -> ProposalRecord:
-    """Insert a new, immutable proposal at ``status`` (``"drafting"`` by default)."""
+    """Insert a new, immutable proposal at ``status`` (``"drafting"`` by default).
+
+    ``require_head_revision_id`` makes the insert conditional on the tree's
+    head still being that revision, evaluated by the database in the same
+    statement. A caller that checks the head itself and then inserts leaves a
+    window in which another editor advances the head -- the proposal is then
+    persisted as ``pending_approval`` against a revision approval will
+    immediately reject as stale, so the UI offers a card that can never be
+    applied. Same conditional-write shape as
+    :func:`lazyportfolio.advisor.repository.create_tree`'s head insert.
+    """
 
     now = datetime.now(UTC).isoformat()
     payload_json = proposal.model_dump_json()
+    columns = (
+        "proposal_id, batch_id, supersedes_proposal_id, tree_id, base_revision_id, "
+        "node_id, kind, producer_kind, producer_id, payload_json, content_hash, "
+        "status, expires_at, created_at"
+    )
+    values = (
+        str(proposal.id),
+        str(proposal.batch_id) if proposal.batch_id is not None else None,
+        str(proposal.supersedes_proposal_id)
+        if proposal.supersedes_proposal_id is not None
+        else None,
+        str(proposal.tree_id),
+        str(proposal.base_revision_id),
+        proposal.node_id,
+        proposal.kind,
+        proposal.model_provenance.producer_kind,
+        proposal.model_provenance.producer_id,
+        payload_json,
+        proposal.content_hash,
+        status,
+        proposal.expires_at.isoformat(),
+        now,
+    )
     with closing(_db.connect(db_path)) as conn:
-        conn.execute(
-            "INSERT INTO change_proposals (proposal_id, batch_id, supersedes_proposal_id, "
-            "tree_id, base_revision_id, node_id, kind, producer_kind, producer_id, "
-            "payload_json, content_hash, status, expires_at, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                str(proposal.id),
-                str(proposal.batch_id) if proposal.batch_id is not None else None,
-                str(proposal.supersedes_proposal_id)
-                if proposal.supersedes_proposal_id is not None
-                else None,
-                str(proposal.tree_id),
-                str(proposal.base_revision_id),
-                proposal.node_id,
-                proposal.kind,
-                proposal.model_provenance.producer_kind,
-                proposal.model_provenance.producer_id,
-                payload_json,
-                proposal.content_hash,
-                status,
-                proposal.expires_at.isoformat(),
-                now,
-            ),
-        )
+        if require_head_revision_id is None:
+            conn.execute(
+                f"INSERT INTO change_proposals ({columns}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
+        else:
+            cursor = conn.execute(
+                f"INSERT INTO change_proposals ({columns}) "
+                "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
+                "WHERE EXISTS (SELECT 1 FROM tree_heads "
+                "WHERE tree_id = ? AND head_revision_id = ?)",
+                (*values, str(proposal.tree_id), require_head_revision_id),
+            )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                raise StaleBaseRevisionOnCreate(
+                    f"tree {proposal.tree_id} is no longer at revision "
+                    f"{require_head_revision_id}; the proposal was not created"
+                )
         conn.commit()
     return ProposalRecord(proposal=proposal, status=status, created_at=now)
 
@@ -140,6 +174,7 @@ def _record_from_row(row: tuple[str, str, str]) -> ProposalRecord:
 __all__ = [
     "ConcurrentProposalWrite",
     "ProposalRecord",
+    "StaleBaseRevisionOnCreate",
     "create",
     "get",
     "list_by_tree",
