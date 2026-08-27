@@ -228,8 +228,8 @@
     <div class="coord-head"><span>Coordinatore albero</span><button class="button" id="coordinatorCloseBtn" title="Chiudi">Chiudi</button></div>
     <div class="coord-body">
       <p style="font-size:12px;color:var(--muted);margin-top:0">Parla all'albero nel suo insieme: il coordinatore decide quali nodi consultare e delega ai loro advisor, che restano gli unici a poter proporre view -- sempre con la tua approvazione. Puo anche aiutarti a costruire una bozza di albero, che resta da salvare a mano.</p>
-      <label style="font-size:11px;font-weight:650">tree_id</label>
-      <input type="text" id="coordinatorTreeId" placeholder="UUID del tree gia registrato">
+      <label style="font-size:11px;font-weight:650">tree_id <span style="font-weight:400;color:var(--muted)">-- vuoto per costruire un albero nuovo</span></label>
+      <input type="text" id="coordinatorTreeId" placeholder="UUID del tree, oppure vuoto per partire da zero">
       <label style="font-size:11px;font-weight:650">messaggio</label>
       <textarea id="coordinatorInput" placeholder="es. rivedi l'albero, il rischio inflazione sta salendo -- oppure: aiutami a costruire un albero regionale a 4 blocchi"></textarea>
       <div style="margin-top:8px"><button class="button primary" id="coordinatorSendBtn">Invia</button></div>
@@ -717,6 +717,8 @@
   // untouched if anything here throws.
   (function () {
     const $c = (id) => document.getElementById(id);
+    // Placeholder tree id for "no onboarded tree yet, help me build one".
+    const DRAFT_TREE = 'draft';
     let conversationId = null, conversationTreeId = null, pollTimer = null;
 
     async function jsonFetch(path, body) {
@@ -753,8 +755,14 @@
         eventsBox.appendChild(row);
       });
 
-      const proposals = (await jsonFetch('/api/trees/' + encodeURIComponent(treeId) + '/proposals?batch_id=' + encodeURIComponent(batchId))).proposals;
       const box = $c('coordinatorProposals');
+      if (treeId === DRAFT_TREE) {
+        // Nothing to propose on before a tree is onboarded, and the endpoint
+        // would reject the placeholder id as a non-UUID.
+        box.innerHTML = 'Nessun albero registrato: in questa modalita si costruisce soltanto una bozza.';
+        return;
+      }
+      const proposals = (await jsonFetch('/api/trees/' + encodeURIComponent(treeId) + '/proposals?batch_id=' + encodeURIComponent(batchId))).proposals;
       box.innerHTML = proposals.length ? '' : 'Nessuna proposta creata in questo turno.';
       proposals.forEach(({ proposal, status }) => box.appendChild(proposalCard(proposal, status)));
     }
@@ -866,9 +874,11 @@
 
     $c('coordinatorSendBtn').onclick = async () => {
       const btn = $c('coordinatorSendBtn');
-      const treeId = $c('coordinatorTreeId').value.trim();
+      // No tree_id means "help me build my first one": the coordinator runs
+      // with the builder only, since there are no node advisors to consult
+      // and nothing to propose on yet.
+      const treeId = $c('coordinatorTreeId').value.trim() || DRAFT_TREE;
       const text = $c('coordinatorInput').value.trim();
-      if (!treeId) { log('tree_id e obbligatorio.'); return; }
       if (!text) { log('Scrivi un messaggio.'); return; }
       // One turn at a time: a second send while the first is still running
       // would abandon its polling while its job keeps creating proposals.

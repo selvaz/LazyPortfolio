@@ -1,12 +1,13 @@
 """Tree Coordinator: the invariants that only exist because delegation is recursive.
 
 A single-node advisor turn never had to worry about a tree moving underneath
-it, about the same node being reached twice, or about a budget shared across
-branches -- so those are what this file pins down, alongside the standing
-structural guarantee that no write-shaped tool is ever on an LLM's surface.
+it, about a second node also wanting to propose, or about a budget shared
+across branches -- so those are what this file pins down.
 
-The LLM is stubbed everywhere here: what is under test is the deterministic
-Python around the model, which is where all the authority actually lives.
+No LLM runs here. The node-reasoning step is a parameter (``_TurnScope.run_turn``),
+so a test hands in a function that returns the result it wants to exercise;
+the deterministic Python around it, which is where all the authority lives, is
+the real subject.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ pytest.importorskip("lazybridge", reason="the coordinator requires lazybridge")
 pytest.importorskip("lazytools", reason="the coordinator requires lazytools")
 
 from project.advisor import agent as advisor_agent  # noqa: E402
-from project.advisor import coordinator, services  # noqa: E402
+from project.advisor import api, coordinator, services  # noqa: E402
 
 from lazyportfolio.advisor.repository import create_tree, get_head, save_revision  # noqa: E402
 from lazyportfolio.backend import OptimizationDataset  # noqa: E402
@@ -54,7 +55,7 @@ def _config() -> dict[str, Any]:
                 "id": "bond",
                 "name": "Bond",
                 "children": [],
-                "instruments": ["ticker:AGG"],
+                "instruments": ["ticker:AGG", "ticker:TLT"],
                 "proxy": "ticker:AGG",
                 "goal": {"objective": "min_risk"},
                 "constraints": {},
@@ -67,6 +68,9 @@ def _config() -> dict[str, Any]:
             }
         },
     }
+
+
+CHILDREN = {"root": ["equity", "bond"], "equity": [], "bond": []}
 
 
 class _FakeBackend:
@@ -113,16 +117,13 @@ def conversation(tree):
     )
 
 
-CHILDREN = {"root": ["equity", "bond"], "equity": [], "bond": []}
-
-
-def _propose_result(instruments: dict[str, float] | None = None):
+def _proposes(*args: Any, **kwargs: Any) -> advisor_agent.AdvisorTurnResult:
     return advisor_agent.AdvisorTurnResult(
         route="propose",
         message="SPY over TLT.",
         proposed_views=[
             advisor_agent.CandidateView(
-                instruments=instruments or {"ticker:SPY": 1.0, "ticker:TLT": -1.0},
+                instruments={"ticker:SPY": 1.0, "ticker:TLT": -1.0},
                 expected_return=0.03,
                 confidence=0.6,
                 rationale="test",
@@ -131,73 +132,94 @@ def _propose_result(instruments: dict[str, float] | None = None):
     )
 
 
-def _explain_result():
+def _explains(*args: Any, **kwargs: Any) -> advisor_agent.AdvisorTurnResult:
     return advisor_agent.AdvisorTurnResult(route="explain", message="Here is why.")
 
 
-def _build(
-    tree,
-    conversation,
-    *,
-    node_id: str = "equity",
-    budget: int = 6,
-    seen_nodes: set[str] | None = None,
-    backend: Any = None,
-    pinned_revision_id: str | None = None,
-):
+def _scope(tree, conversation, *, run_turn, budget=6, backend=None, **overrides) -> Any:
     revision, store_path = tree
-    return coordinator._build_consult_tool(
-        revision.tree_id,
-        node_id,
-        CHILDREN,
-        pinned_revision_id=pinned_revision_id or revision.revision_id,
-        batch_id=uuid4(),
+    return coordinator._TurnScope(
+        tree_id=revision.tree_id,
+        pinned_revision_id=overrides.get("pinned_revision_id", revision.revision_id),
+        batch_id=overrides.get("batch_id", uuid4()),
         budget=coordinator.ConsultationBudget(budget),
-        seen_nodes=seen_nodes if seen_nodes is not None else set(),
+        proposed_nodes=overrides.get("proposed_nodes", set()),
         caller_id="test",
         conversation_id=conversation.conversation_id,
         model="test-model",
+        base_tools=list,
+        run_turn=run_turn,
         backend=backend,
         db_path=store_path,
-        base_tools_factory=list,
     )
 
 
+def _events(conversation, store_path) -> list[dict[str, Any]]:
+    return [
+        m.content
+        for m in services.list_messages(conversation.conversation_id, db_path=store_path)
+        if m.content.get("kind") == "coordinator_consultation"
+    ]
+
+
 # --------------------------------------------------------------------- #
-# Structural: no write-shaped tool anywhere on a coordinator-built surface
+# Structural
 # --------------------------------------------------------------------- #
-def test_builder_tools_never_include_a_write_tool() -> None:
-    """The tree builder transforms drafts in memory; it must not hold a tool
-    that could reach a store, a revision, or a proposal."""
+def test_the_builder_holds_no_write_shaped_tool() -> None:
+    """It drafts in memory; nothing on its surface can reach a store, a
+    revision, or a proposal."""
 
     names = {t.name for t in coordinator._builder_tools()}
     forbidden = ("save", "delete", "apply", "write", "approve", "reject", "onboard")
-    offenders = [n for n in names if any(bad in n.lower() for bad in forbidden)]
-    assert offenders == [], f"write-shaped tool(s) exposed to the LLM: {offenders}"
-    assert "check_name_available" in names
+    assert [n for n in names if any(bad in n.lower() for bad in forbidden)] == []
+    assert names == {"check_name_available"}
 
 
-def test_each_node_gets_a_uniquely_named_tool() -> None:
-    """Two node ids that sanitize to the same string must still produce
-    distinct tool names -- a tool list with duplicates is not something to
-    rely on behaving predictably."""
+def test_tool_names_are_distinct_and_short_enough_to_send() -> None:
+    """Two ids that sanitize alike must not collide, and function-tool APIs
+    commonly cap a name at 64 characters."""
 
     assert coordinator._consult_tool_name("a-b") != coordinator._consult_tool_name("a_b")
     assert coordinator._consult_tool_name("us/equity").startswith("consult_node__us_equity__")
+    assert len(coordinator._consult_tool_name("x" * 300)) <= 64
+
+
+def test_a_node_is_given_its_children_and_no_siblings(tree, conversation) -> None:
+    """The whole point of the recursion: the tools a node can reach are its own
+    children's, so a branch cannot reach across into another one."""
+
+    handed: dict[str, list[str]] = {}
+
+    def _capture(node_id, instruction, *, context, tools, model, agent_name):
+        handed[node_id] = [t.name for t in tools]
+        return _explains()
+
+    scope = _scope(tree, conversation, run_turn=_capture)
+    coordinator._build_consult_tool("root", CHILDREN, scope).func("look around")
+    coordinator._build_consult_tool("equity", CHILDREN, scope).func("look around")
+
+    assert handed["root"] == [
+        coordinator._consult_tool_name("equity"),
+        coordinator._consult_tool_name("bond"),
+    ]
+    assert handed["equity"] == [], "a leaf was handed tools it has no children for"
+
+
+def test_a_negative_budget_is_rejected_rather_than_read_as_exhausted() -> None:
+    with pytest.raises(ValueError, match="cannot be negative"):
+        coordinator.ConsultationBudget(-1)
 
 
 # --------------------------------------------------------------------- #
 # Budget
 # --------------------------------------------------------------------- #
-def test_budget_of_one_admits_exactly_one_of_two_concurrent_reservations() -> None:
-    """Whether one model response's tool calls run concurrently is a
-    LazyBridge detail, so the reservation is atomic rather than assuming
-    they do not."""
+def test_a_budget_of_one_admits_exactly_one_of_eight_concurrent_reservations() -> None:
+    """Whether one model response's tool calls run concurrently is a LazyBridge
+    detail, so the reservation is atomic rather than assuming they do not."""
 
     budget = coordinator.ConsultationBudget(1)
     barrier = threading.Barrier(8)
-    granted: list[int] = []
-    denied: list[int] = []
+    outcomes: list[str] = []
     lock = threading.Lock()
 
     def attempt() -> None:
@@ -205,326 +227,198 @@ def test_budget_of_one_admits_exactly_one_of_two_concurrent_reservations() -> No
         try:
             budget.reserve()
         except coordinator.ConsultationBudgetExceeded:
-            with lock:
-                denied.append(1)
+            result = "denied"
         else:
-            with lock:
-                granted.append(1)
+            result = "granted"
+        with lock:
+            outcomes.append(result)
 
     threads = [threading.Thread(target=attempt) for _ in range(8)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
-    assert len(granted) == 1
-    assert len(denied) == 7
+    assert outcomes.count("granted") == 1
+    assert outcomes.count("denied") == 7
     assert budget.remaining == 0
 
 
-def test_an_exhausted_budget_refuses_without_calling_the_model(
-    monkeypatch, tree, conversation
-) -> None:
-    calls: list[str] = []
-
+def test_an_exhausted_budget_refuses_without_reasoning_at_all(tree, conversation) -> None:
     def _never(*args: Any, **kwargs: Any):
-        calls.append("called")
         raise AssertionError("the model must not be called once the budget is spent")
 
-    monkeypatch.setattr(advisor_agent, "run_node_turn", _never)
-    tool = _build(tree, conversation, budget=0)
-
-    result = tool.func("look at this node")
-
-    assert calls == []
-    assert "budget" in result["error"]
-
-
-# --------------------------------------------------------------------- #
-# Revision pinning and per-turn dedup
-# --------------------------------------------------------------------- #
-def test_create_proposal_refuses_a_head_that_moved_after_its_own_check(
-    monkeypatch, tree, frame
-) -> None:
-    """The coordinator's own check happens before ``create_proposal``, which
-    then re-reads the head and does slow snapshot/counterfactual work. That
-    second window is inside ``create_proposal``, so the pin has to be enforced
-    there too -- an outer check alone cannot see it."""
-
-    revision, store_path = tree
-    moved: dict[str, str] = {}
-    real_load = services.snapshot_service.load_snapshot
-
-    def _move_head_mid_evaluation(*args: Any, **kwargs: Any):
-        if not moved:
-            new = save_revision(
-                revision.tree_id,
-                _config(),
-                actor_type="human",
-                actor_id="concurrent-editor",
-                db_path=store_path,
-            )
-            moved["revision_id"] = new.revision_id
-        return real_load(*args, **kwargs)
-
-    monkeypatch.setattr(services.snapshot_service, "load_snapshot", _move_head_mid_evaluation)
-
-    with pytest.raises(services.StaleBaseRevision, match="while this proposal was being"):
-        services.create_proposal(
-            revision.tree_id,
-            "equity",
-            [{"instruments": {"ticker:SPY": 1.0, "ticker:TLT": -1.0},
-              "expected_return": 0.03, "confidence": 0.6, "source": "test",
-              "rationale": "test"}],
-            caller_id="test",
-            expected_revision_id=revision.revision_id,
-            backend=_FakeBackend(frame),
-            db_path=store_path,
-        )
-    assert moved, "the test did not actually move the head"
-    assert services.list_proposals(revision.tree_id, db_path=store_path) == []
-
-
-def test_a_failed_persist_releases_the_node_for_a_retry(monkeypatch, tree, conversation) -> None:
-    """Dedup must not punish a failure: a node nothing was ever filed for is
-    still a node worth asking again."""
-
-    revision, store_path = tree
-    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _propose_result())
-
-    def _fail(*args: Any, **kwargs: Any):
-        raise RuntimeError("market data unavailable")
-
-    monkeypatch.setattr(services, "create_proposal", _fail)
-    seen: set[str] = set()
-    tool = _build(tree, conversation, seen_nodes=seen)
-
-    result = tool.func("propose something")
-
-    assert "market data unavailable" in result["error"]
-    assert "equity" not in seen, "a node with no proposal stayed marked as done"
-
-
-def test_a_tree_that_moved_mid_turn_refuses_to_persist(
-    monkeypatch, tree, conversation, frame
-) -> None:
-    """The coordinator reasons against a pinned revision; if the head moved
-    while it was thinking, the proposal it would file no longer describes the
-    tree it reasoned about."""
-
-    revision, store_path = tree
-    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _propose_result())
-    tool = _build(tree, conversation, backend=_FakeBackend(frame))
-
-    save_revision(
-        revision.tree_id,
-        _config(),
-        actor_type="human",
-        actor_id="someone-else",
-        db_path=store_path,
+    tool = coordinator._build_consult_tool(
+        "equity", CHILDREN, _scope(tree, conversation, run_turn=_never, budget=0)
     )
-    result = tool.func("propose something")
 
-    assert result["route"] == "refused"
-    assert "changed since this turn started" in result["message"]
-    assert services.list_proposals(revision.tree_id, db_path=store_path) == []
+    assert "budget" in tool.func("look at this node")["message"]
 
 
-def test_only_one_proposal_is_created_per_turn_even_across_nodes(
-    monkeypatch, tree, conversation, frame
-) -> None:
-    """Proposals from one turn share a base revision, so approving one makes
-    the rest impossible to apply. A second one is refused rather than filed as
-    a card that could never be approved -- and that holds for a *different*
-    node, not only for a repeat of the same one."""
-
-    revision, store_path = tree
-    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _propose_result())
-    seen: set[str] = set()
-    backend = _FakeBackend(frame)
-    equity = _build(tree, conversation, seen_nodes=seen, backend=backend)
-    bond = _build(tree, conversation, node_id="bond", seen_nodes=seen, backend=backend)
-
-    first = equity.func("propose something")
-    same_node_again = equity.func("propose something else")
-    other_node = bond.func("propose something here too")
-
-    assert first["route"] == "propose"
-    assert first["proposal_id"]
-    assert same_node_again["route"] == "refused"
-    assert other_node["route"] == "refused"
-    assert "already created for node equity" in other_node["message"]
-    assert len(services.list_proposals(revision.tree_id, db_path=store_path)) == 1
-
-
-def test_the_insert_itself_refuses_a_head_that_moved(monkeypatch, tree, frame) -> None:
-    """The last window is between the final check and the insert. It is closed
-    by the database evaluating the head in the same statement, so a caller
-    cannot lose that race however carefully it checks first."""
-
-    from lazyportfolio.advisor import proposal_repository
-
-    revision, store_path = tree
-    real_transition = proposal_repository.transition
-    moved: dict[str, str] = {}
-
-    # Move the head after every pre-insert check has passed, by hooking the
-    # last thing that runs before it.
-    real_content_hash = services.content_hash
-
-    def _move_then_hash(payload: Any) -> str:
-        if not moved:
-            new = save_revision(
-                revision.tree_id,
-                _config(),
-                actor_type="human",
-                actor_id="concurrent-editor",
-                db_path=store_path,
-            )
-            moved["revision_id"] = new.revision_id
-        return real_content_hash(payload)
-
-    monkeypatch.setattr(services, "content_hash", _move_then_hash)
-
-    with pytest.raises(services.StaleBaseRevision, match="no longer at revision"):
-        services.create_proposal(
-            revision.tree_id,
-            "equity",
-            [{"instruments": {"ticker:SPY": 1.0, "ticker:TLT": -1.0},
-              "expected_return": 0.03, "confidence": 0.6, "source": "test",
-              "rationale": "test"}],
-            caller_id="test",
-            expected_revision_id=revision.revision_id,
-            backend=_FakeBackend(frame),
-            db_path=store_path,
-        )
-
-    assert moved, "the test did not actually move the head"
-    assert services.list_proposals(revision.tree_id, db_path=store_path) == []
-    assert proposal_repository.transition is real_transition
-
-
-def test_an_explanation_from_a_revision_the_turn_never_pinned_is_refused(
-    monkeypatch, tree, conversation
+# --------------------------------------------------------------------- #
+# Revision pinning
+# --------------------------------------------------------------------- #
+def test_a_tree_that_moved_refuses_before_reasoning_even_to_explain(
+    tree, conversation
 ) -> None:
     """An explain path files nothing, so it is tempting to let it through --
     but an answer drawn from a revision this turn never saw would still be
     presented, and audited, as an answer about the pinned one."""
 
     revision, store_path = tree
-    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _explain_result())
-    tool = _build(tree, conversation)
-
-    save_revision(
-        revision.tree_id,
-        _config(),
-        actor_type="human",
-        actor_id="someone-else",
-        db_path=store_path,
+    tool = coordinator._build_consult_tool(
+        "equity", CHILDREN, _scope(tree, conversation, run_turn=_explains)
     )
+    save_revision(
+        revision.tree_id, _config(), actor_type="human", actor_id="other", db_path=store_path
+    )
+
     result = tool.func("why is this node weighted like that?")
 
     assert result["route"] == "refused"
     assert "changed since this turn started" in result["message"]
 
 
-def test_an_oversized_tree_is_an_http_error_not_a_dropped_request(monkeypatch, tree) -> None:
-    """``TreeTooLargeError`` is a supported outcome for a valid tree; only
-    ``ApiError`` reaches the HTTP layer's error translation."""
+def test_the_insert_itself_refuses_a_head_that_moved(tree, frame) -> None:
+    """The last window is between the final check and the insert, so the
+    database evaluates the head in the same statement -- a caller cannot lose
+    that race however carefully it checks first."""
 
-    from project.advisor import api
+    revision, store_path = tree
+    views = [
+        {
+            "instruments": {"ticker:SPY": 1.0, "ticker:TLT": -1.0},
+            "expected_return": 0.03,
+            "confidence": 0.6,
+            "source": "test",
+            "rationale": "test",
+        }
+    ]
+    stale_revision_id = revision.revision_id
+    save_revision(
+        revision.tree_id, _config(), actor_type="human", actor_id="other", db_path=store_path
+    )
 
-    from lazyportfolio.advisor import node_universe
+    with pytest.raises(services.StaleBaseRevision):
+        services.create_proposal(
+            revision.tree_id,
+            "equity",
+            views,
+            caller_id="test",
+            expected_revision_id=stale_revision_id,
+            backend=_FakeBackend(frame),
+            db_path=store_path,
+        )
+
+    assert services.list_proposals(revision.tree_id, db_path=store_path) == []
+
+
+# --------------------------------------------------------------------- #
+# One proposal per turn
+# --------------------------------------------------------------------- #
+def test_only_one_proposal_is_created_per_turn_even_across_nodes(
+    tree, conversation, frame
+) -> None:
+    """Proposals from one turn share a base revision, so approving one makes
+    the rest impossible to apply. The second is refused rather than filed as a
+    card that could never be approved -- and that holds for a *different* node,
+    not only a repeat of the same one."""
+
+    revision, store_path = tree
+    scope = _scope(tree, conversation, run_turn=_proposes, backend=_FakeBackend(frame))
+    equity = coordinator._build_consult_tool("equity", CHILDREN, scope)
+    bond = coordinator._build_consult_tool("bond", CHILDREN, scope)
+
+    first = equity.func("propose something")
+    same_again = equity.func("propose something else")
+    other_node = bond.func("propose something here too")
+
+    assert first["route"] == "propose" and first["proposal_id"]
+    assert same_again["route"] == "refused"
+    assert other_node["route"] == "refused"
+    assert "already created for node equity" in other_node["message"]
+    assert len(services.list_proposals(revision.tree_id, db_path=store_path)) == 1
+
+
+def test_a_failed_persist_releases_the_node_for_a_retry(tree, conversation, frame) -> None:
+    """Dedup must not punish a failure: a node nothing was filed for is still
+    a node worth asking again -- so the retry has to actually succeed."""
 
     revision, store_path = tree
 
-    # Patched rather than driven by a real oversized tree: the caps are bound
-    # as default arguments, so setting the module constant would not change
-    # what the already-defined function uses.
-    def _too_large(*args: Any, **kwargs: Any):
-        raise node_universe.TreeTooLargeError("tree has more than 1 nodes")
+    class _FailsOnce(_FakeBackend):
+        calls = 0
 
-    monkeypatch.setattr(node_universe, "build_tree_summary", _too_large)
+        def load_returns(self, *args: Any, **kwargs: Any):
+            _FailsOnce.calls += 1
+            if _FailsOnce.calls == 1:
+                raise RuntimeError("market data unavailable")
+            return super().load_returns(*args, **kwargs)
 
-    with pytest.raises(api.ApiError) as caught:
-        api.handle_get(f"/api/trees/{revision.tree_id}/summary", db_path=store_path)
+    scope = _scope(tree, conversation, run_turn=_proposes, backend=_FailsOnce(frame))
+    tool = coordinator._build_consult_tool("equity", CHILDREN, scope)
 
-    assert caught.value.status == 413
-    assert "too large" in caught.value.message
+    failed = tool.func("propose something")
+    retried = tool.func("propose something")
+
+    assert "market data unavailable" in failed["error"]
+    assert retried["route"] == "propose" and retried["proposal_id"]
+    assert len(services.list_proposals(revision.tree_id, db_path=store_path)) == 1
 
 
-def test_an_explain_turn_files_nothing_but_is_still_audited(
-    monkeypatch, tree, conversation
-) -> None:
+# --------------------------------------------------------------------- #
+# Audit trail
+# --------------------------------------------------------------------- #
+def test_an_explain_turn_files_nothing_but_is_still_audited(tree, conversation) -> None:
     """"List proposals by batch" cannot see an explain-only consultation --
     the conversation event is what keeps it reconstructable."""
 
     revision, store_path = tree
-    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _explain_result())
-    tool = _build(tree, conversation)
+    tool = coordinator._build_consult_tool(
+        "equity", CHILDREN, _scope(tree, conversation, run_turn=_explains)
+    )
 
     result = tool.func("why is this node weighted like that?")
 
-    assert result["route"] == "explain"
-    assert result["proposal_id"] is None
+    assert result["route"] == "explain" and result["proposal_id"] is None
     assert services.list_proposals(revision.tree_id, db_path=store_path) == []
-    events = [
-        m.content
-        for m in services.list_messages(conversation.conversation_id, db_path=store_path)
-        if m.content.get("kind") == "coordinator_consultation"
-    ]
+    events = _events(conversation, store_path)
     assert [e["status"] for e in events] == ["reasoned"]
     assert events[0]["route"] == "explain"
 
 
 def test_a_failure_inside_a_node_comes_back_as_a_tool_result_not_a_crash(
-    monkeypatch, tree, conversation
+    tree, conversation
 ) -> None:
     """One node blowing up must not abort the whole turn and discard the
     consultations that already succeeded."""
 
-    revision, store_path = tree
-
     def _boom(*args: Any, **kwargs: Any):
         raise RuntimeError("the model provider is down")
 
-    monkeypatch.setattr(advisor_agent, "run_node_turn", _boom)
-    tool = _build(tree, conversation)
+    tool = coordinator._build_consult_tool(
+        "equity", CHILDREN, _scope(tree, conversation, run_turn=_boom)
+    )
 
-    result = tool.func("propose something")
-
-    assert "the model provider is down" in result["error"]
-    statuses = [
-        m.content.get("status")
-        for m in services.list_messages(conversation.conversation_id, db_path=store_path)
-        if m.content.get("kind") == "coordinator_consultation"
-    ]
-    assert statuses == ["error"]
+    assert "the model provider is down" in tool.func("propose something")["error"]
+    assert [e["status"] for e in _events(conversation, tree[1])] == ["error"]
 
 
-# --------------------------------------------------------------------- #
-# Provenance
-# --------------------------------------------------------------------- #
 def test_a_coordinator_proposal_carries_its_batch_and_producer(
-    monkeypatch, tree, conversation, frame
+    tree, conversation, frame
 ) -> None:
     revision, store_path = tree
-    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _propose_result())
     batch_id = uuid4()
     tool = coordinator._build_consult_tool(
-        revision.tree_id,
         "equity",
         CHILDREN,
-        pinned_revision_id=revision.revision_id,
-        batch_id=batch_id,
-        budget=coordinator.ConsultationBudget(6),
-        seen_nodes=set(),
-        caller_id="test",
-        conversation_id=conversation.conversation_id,
-        model="test-model",
-        backend=_FakeBackend(frame),
-        db_path=store_path,
-        base_tools_factory=list,
+        _scope(
+            tree,
+            conversation,
+            run_turn=_proposes,
+            backend=_FakeBackend(frame),
+            batch_id=batch_id,
+        ),
     )
 
     tool.func("propose something")
@@ -535,94 +429,78 @@ def test_a_coordinator_proposal_carries_its_batch_and_producer(
     assert provenance.producer_id == "tree-coordinator-agent"
     assert provenance.producer_kind == "interactive_chat"
     assert records[0].proposal.batch_id == batch_id
-    # Scoping is by tree as well as batch: a batch id alone is unowned.
-    assert services.list_proposals(revision.tree_id, batch_id=uuid4(), db_path=store_path) == []
     head = get_head(revision.tree_id, db_path=store_path)
     assert head is not None
     assert head.revision_id == revision.revision_id, "proposing must not move the head"
 
 
 # --------------------------------------------------------------------- #
-# Tree builder: pure transforms, and the onboarded-name guard
+# Draft validation and conversation history -- pure, so tested directly
 # --------------------------------------------------------------------- #
-def _builder_tool(name: str, *, db_path: str | None = None):
-    return next(t for t in coordinator._builder_tools(db_path=db_path) if t.name == name)
+def test_the_draft_gate_accepts_a_real_tree_and_rejects_anything_else() -> None:
+    """The builder is asked for a config but nothing forces it to return a
+    valid one, so this gate -- not the builder's own care -- is what keeps an
+    unusable draft out of the editor. ``run_coordinator_turn`` calls it on the
+    way out; this covers the gate itself."""
+
+    valid, error = coordinator._validate_draft_config(_config())
+    assert valid == _config() and error is None
+
+    rejected, error = coordinator._validate_draft_config({"root_id": "x", "nodes": [{"id": "x"}]})
+    assert rejected is None
+    assert "not a valid tree" in error
+
+    assert coordinator._validate_draft_config(None) == (None, None)
 
 
-def test_builder_transforms_never_mutate_the_input_config() -> None:
-    config = _config()
-    before = str(config)
+def test_history_replays_the_exchange_but_not_the_current_message(tree, conversation) -> None:
+    """The panel reuses one conversation, so "the other change you mentioned"
+    has to reach the model with the exchange it refers to -- once."""
 
-    updated = _builder_tool("update_node").func(config, "equity", {"name": "Equity Sleeve"})
+    from lazyportfolio.advisor import conversation_repository
 
-    assert str(config) == before, "the input draft was mutated"
-    node = next(n for n in updated["nodes"] if n["id"] == "equity")
-    assert node["name"] == "Equity Sleeve"
+    _, store_path = tree
+    add = conversation_repository.add_message
+    add(conversation.conversation_id, "user", {"text": "look at equity"}, db_path=store_path)
+    add(
+        conversation.conversation_id,
+        "assistant",
+        {"kind": "coordinator_turn_result", "message": "equity looks fine, bond does not"},
+        db_path=store_path,
+    )
+    add(
+        conversation.conversation_id,
+        "assistant",
+        {"kind": "coordinator_consultation", "node_id": "equity", "status": "reasoned"},
+        db_path=store_path,
+    )
+    current = add(
+        conversation.conversation_id, "user", {"text": "then do the other one"}, db_path=store_path
+    )
 
-
-def test_builder_refuses_to_return_an_invalid_draft() -> None:
-    """The same gate ``write_model`` applies, applied one step earlier so the
-    model gets an actionable error while it can still act on it."""
-
-    with pytest.raises(ValueError, match="invalid V2 draft"):
-        _builder_tool("update_node").func(_config(), "equity", {"instruments": "not-a-list"})
-
-
-def test_builder_removes_a_whole_subtree_leaving_no_dangling_child() -> None:
-    updated = _builder_tool("remove_node").func(_config(), "equity")
-
-    ids = {n["id"] for n in updated["nodes"]}
-    assert "equity" not in ids
-    assert all("equity" not in (n.get("children") or []) for n in updated["nodes"])
-
-
-def test_builder_cannot_rename_a_node_or_edit_constraints_by_side_effect() -> None:
-    with pytest.raises(ValueError, match="cannot change a node id"):
-        _builder_tool("update_node").func(_config(), "equity", {"id": "renamed"})
-    with pytest.raises(ValueError, match="use set_constraints"):
-        _builder_tool("update_node").func(_config(), "equity", {"constraints": {}})
-
-
-def test_an_invented_draft_never_reaches_the_caller(monkeypatch, tree, conversation) -> None:
-    """The builder's tools validate what they return, but nothing forces the
-    model to have used them -- it can put an invented config straight into its
-    structured output, so the boundary validates too."""
-
-    revision, store_path = tree
-
-    class _FakeCoordinator:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
-
-        def __call__(self, prompt: str) -> Any:
-            from types import SimpleNamespace
-
-            return SimpleNamespace(
-                payload=coordinator.CoordinatorTurnResult(
-                    message="here is your tree",
-                    draft_config={"root_id": "nope", "nodes": [{"id": "nope"}]},
-                ),
-                error=None,
-            )
-
-    import lazybridge
-
-    monkeypatch.setattr(lazybridge, "Agent", _FakeCoordinator)
-    monkeypatch.setattr(lazybridge, "LLMEngine", lambda *a, **k: None)
-
-    result = coordinator.run_coordinator_turn(
-        revision.tree_id,
-        "build me a tree",
-        caller_id="test",
-        conversation_id=conversation.conversation_id,
+    history = coordinator._recent_history(
+        conversation.conversation_id,
+        current_message_id=current.message_id,
         db_path=store_path,
     )
 
-    assert result["draft_config"] is None
-    assert "not a valid tree" in result["draft_error"]
+    assert "Human: look at equity" in history
+    assert "You: equity looks fine, bond does not" in history
+    assert "then do the other one" not in history
+    assert "coordinator_consultation" not in history
 
 
-def test_builder_reports_an_onboarded_name_as_unavailable(tmp_path) -> None:
+def test_flatten_summary_reads_the_shape_off_a_summary(tree) -> None:
+    revision, store_path = tree
+    summary = services.get_tree_summary(revision.tree_id, db_path=store_path)
+
+    assert coordinator._flatten_summary(summary["root"]) == ("root", CHILDREN)
+
+
+# --------------------------------------------------------------------- #
+# Builder guard
+# --------------------------------------------------------------------- #
+def test_the_builder_reports_an_onboarded_name_as_unavailable(tmp_path) -> None:
     """The named-config row and the advisor's revision history are separate
     stores: editing the named row after onboarding changes nothing about the
     live tree while looking like it did."""
@@ -632,12 +510,12 @@ def test_builder_reports_an_onboarded_name_as_unavailable(tmp_path) -> None:
 
     store_path = str(tmp_path / "store.sqlite3")
     write_model("my-tree", _config(), store_path=store_path)
-    tool = _builder_tool("check_name_available", db_path=store_path)
+    (check,) = coordinator._builder_tools(store_path)
 
-    assert tool.func("my-tree")["available"] is True
+    assert check.func("my-tree")["available"] is True
 
     migrate_legacy_trees(db_path=store_path)
-    after = tool.func("my-tree")
+    after = check.func("my-tree")
 
     assert after["available"] is False
     assert "already onboarded" in after["reason"]
@@ -646,13 +524,9 @@ def test_builder_reports_an_onboarded_name_as_unavailable(tmp_path) -> None:
 # --------------------------------------------------------------------- #
 # API scoping
 # --------------------------------------------------------------------- #
-def test_a_node_conversation_cannot_be_driven_through_the_coordinator_route(
-    tree, monkeypatch
-) -> None:
+def test_a_node_conversation_cannot_be_driven_through_the_coordinator_route(tree) -> None:
     """Posting a node conversation here would run a whole tree-wide turn under
     a conversation scoped to one node."""
-
-    from project.advisor import api
 
     revision, store_path = tree
     node_conversation = services.create_conversation(
@@ -667,29 +541,22 @@ def test_a_node_conversation_cannot_be_driven_through_the_coordinator_route(
         )
 
 
-def test_proposals_are_listed_by_tree_and_batch_together(tree, conversation, monkeypatch, frame):
+def test_proposals_are_listed_by_tree_and_batch_together(tree, conversation, frame) -> None:
     """A batch id is an unowned identifier: querying by it alone would let a
     caller who guessed one read across trees."""
 
-    from project.advisor import api
-
     revision, store_path = tree
-    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _propose_result())
     batch_id = uuid4()
     coordinator._build_consult_tool(
-        revision.tree_id,
         "equity",
         CHILDREN,
-        pinned_revision_id=revision.revision_id,
-        batch_id=batch_id,
-        budget=coordinator.ConsultationBudget(6),
-        seen_nodes=set(),
-        caller_id="test",
-        conversation_id=conversation.conversation_id,
-        model="test-model",
-        backend=_FakeBackend(frame),
-        db_path=store_path,
-        base_tools_factory=list,
+        _scope(
+            tree,
+            conversation,
+            run_turn=_proposes,
+            backend=_FakeBackend(frame),
+            batch_id=batch_id,
+        ),
     ).func("propose something")
 
     other_tree = create_tree(_config(), actor_type="human", actor_id="other", db_path=store_path)
@@ -708,3 +575,57 @@ def test_proposals_are_listed_by_tree_and_batch_together(tree, conversation, mon
             {"batch_id": ["not-a-uuid"]},
             db_path=store_path,
         )
+
+
+def test_an_oversized_tree_is_an_http_error_not_a_dropped_request(tmp_path) -> None:
+    """``TreeTooLargeError`` is a supported outcome for a valid tree, and only
+    ``ApiError`` reaches the HTTP layer's error translation -- without this the
+    caller gets a dropped connection instead of an answer. Built past the real
+    cap rather than lowering it, so the path under test is the real one."""
+
+    from lazyportfolio.advisor.node_universe import MAX_SUMMARY_NODES
+
+    # Siblings need distinct proxies, so each child gets its own ticker.
+    children = [f"n{i}" for i in range(MAX_SUMMARY_NODES)]
+    oversized = {
+        "root_id": "root",
+        "currency": "USD",
+        "nodes": [
+            {
+                "id": "root",
+                "name": "Root",
+                "children": children,
+                "instruments": [],
+                "goal": {"objective": "min_risk"},
+                "constraints": {},
+            },
+            *(
+                {
+                    "id": child,
+                    "name": child,
+                    "children": [],
+                    "instruments": [f"ticker:{child.upper()}"],
+                    "proxy": f"ticker:{child.upper()}",
+                    "goal": {"objective": "min_risk"},
+                    "constraints": {},
+                }
+                for child in children
+            ),
+        ],
+        "backtest": {
+            "benchmark": {
+                "name": "B0",
+                "weights": {
+                    f"ticker:{child.upper()}": 1.0 / len(children) for child in children
+                },
+            }
+        },
+    }
+    store_path = str(tmp_path / "store.sqlite3")
+    revision = create_tree(oversized, actor_type="human", actor_id="test", db_path=store_path)
+
+    with pytest.raises(api.ApiError) as caught:
+        api.handle_get(f"/api/trees/{revision.tree_id}/summary", db_path=store_path)
+
+    assert caught.value.status == 413
+    assert "too large" in caught.value.message

@@ -438,6 +438,7 @@ def handle_coordinator_turn_job(
         str(message.content["text"]),
         caller_id=conversation.user_id,
         conversation_id=job.conversation_id,
+        current_message_id=job.request_message_id,
         backend=backend,
         db_path=db_path,
     )
