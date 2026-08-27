@@ -78,6 +78,11 @@ Ogni passo è raggiungibile a partire dal solo `proposal_id` (o `conversation_id
 
 ## 6. Produttore batch (secondo producer, Fase 6)
 
+> **Nota (2026-08-27):** quando questa sezione fu scritta, il produttore batch
+> era l'unico secondo producer e nessun componente decideva *quali* nodi
+> toccare. Non è più così: il Tree Coordinator (§8) è un producer che ragiona.
+> Quanto segue descrive il produttore batch, che resta muto per costruzione.
+
 `project/advisor/batch_producer.py`'s `run_proposal_batch(tree_id, node_views, ...)` è un secondo producer di `ChangeProposal`, non instradato da nessuna API HTTP -- va chiamato direttamente (script, shell Python, o un futuro trigger schedulato):
 
 ```python
@@ -103,3 +108,65 @@ result.errors       # {node_id: messaggio} per i nodi che hanno fallito la valid
 ## 7. Costo LLM
 
 Ogni messaggio `text` instradato a `advisor_turn` è una chiamata LLM reale (default `deepseek-v4-flash`, tier economico). Budget dichiarato (§9.3, non ancora enforced a livello di codice in questa fase): 20 tool call/job, 5 fetch artifact, 5 fonti web, 1 reviewer esterno. Il percorso `fixture_proposal` (`views` esplicite) resta a costo zero per test/demo che non hanno bisogno di un LLM reale.
+
+Un turno del **coordinatore** (§8) costa di più per costruzione: è una chiamata
+LLM propria *più* una per ogni nodo che decide di consultare, ciascuna con i
+propri tool di ricerca. Il tetto è `max_consultations` (default 6), condiviso
+da tutto l'albero in un turno -- vedi §8.
+
+## 8. Tree Coordinator (`project/advisor/coordinator.py`)
+
+Un terzo producer, questa volta **con ragionamento proprio**: decide quali nodi
+consultare e delega ai loro advisor. La gerarchia degli agenti rispecchia
+quella dell'albero -- l'advisor di un nodo riceve come tool esattamente quelli
+dei propri figli, quindi un ramo non può raggiungerne un altro.
+
+L'autorità non cambia: ogni risultato delegato passa dalla stessa
+`services.create_proposal`, quindi stessa validazione, stesso controfattuale,
+stesso `pending_approval`, stessa approvazione umana. La delega aggiunge
+portata, mai privilegio. Nessun tool del coordinatore o dei suoi delegati
+scrive sull'albero.
+
+```bash
+# 1. aprire una conversazione (scoped all'albero, non a un nodo)
+curl -sX POST -H 'Content-Type: application/json' -d '{}' \
+  http://127.0.0.1:8766/api/trees/$TREE/coordinator/conversations
+
+# 2. un turno
+curl -sX POST -H 'Content-Type: application/json' \
+  -d '{"text":"rivedi l albero, il rischio inflazione sta salendo"}' \
+  http://127.0.0.1:8766/api/advisor/coordinator/conversations/$CONV/messages
+
+# 3. cosa ha fatto DAVVERO il turno (non il suo racconto)
+curl -s "http://127.0.0.1:8766/api/trees/$TREE/proposals?batch_id=$BATCH"
+```
+
+**Costruire un albero da zero.** Se `tree_id` non corrisponde a nessun albero
+registrato, il turno gira in modalità sola costruzione: niente advisor da
+consultare, niente su cui proporre, solo lo specialista che scrive una bozza.
+La bozza torna al chiamante e va salvata a mano -- nessuno la persiste per te.
+Il pannello usa il segnaposto `draft` quando lasci vuoto il campo tree_id.
+
+**Ricostruire un turno.** Le proposte create sono interrogabili per `batch_id`;
+tutto il resto (consultazioni che hanno solo spiegato, budget esaurito,
+rifiuti per revisione cambiata, errori) è negli eventi
+`coordinator_consultation` della conversazione stessa. Il messaggio finale del
+modello è narrativa e non fa fede.
+
+**Tre invarianti che un turno su singolo nodo non aveva:**
+
+- **Revisione bloccata.** Una revisione per turno, controllata prima di
+  ragionare e di nuovo prima di scrivere; l'insert è condizionato su di essa
+  dentro la stessa istruzione SQL. Un turno che ha ragionato su R1 non scrive
+  mai contro R2.
+- **Una proposta per turno**, su tutti i nodi. Le proposte di uno stesso turno
+  condividono la revisione base: approvandone una le altre falliscono il
+  controllo base-vs-head. Crearle comunque significherebbe mostrare card già
+  inapplicabili. La seconda scoperta torna al coordinatore, che la riporta
+  nella risposta.
+- **Budget condiviso** (`max_consultations`, default 6) riservato in modo
+  atomico, valido su tutto l'albero e non per ramo.
+
+**Limiti dichiarati:** il replay di un job (dopo un crash del worker) riparte
+con budget e dedup azzerati; il riassunto dell'albero entra intero nel prompt,
+senza tetto sulla lunghezza delle liste di strumenti.

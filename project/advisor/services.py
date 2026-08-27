@@ -107,6 +107,12 @@ def get_head_revision_id(
     return str(head.revision_id)
 
 
+def list_trees(*, db_path: str | os.PathLike[str] | None = None) -> list[dict[str, str]]:
+    """Every onboarded tree, newest first, for a caller offering a choice."""
+
+    return tree_repository.list_trees(db_path=db_path)
+
+
 def get_tree_summary(
     tree_id: str, *, db_path: str | os.PathLike[str] | None = None
 ) -> dict[str, Any]:
@@ -553,6 +559,7 @@ __all__ = [
     "handle_fixture_proposal_job",
     "list_messages",
     "list_proposals",
+    "list_trees",
     "post_message_and_enqueue",
     "reject_proposal",
 ]

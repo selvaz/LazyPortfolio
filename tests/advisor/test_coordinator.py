@@ -599,6 +599,26 @@ def test_proposals_are_listed_by_tree_and_batch_together(tree, conversation, fra
         )
 
 
+def test_trees_are_listed_by_a_name_a_person_can_recognise(tmp_path) -> None:
+    """A tree_id is a UUID nobody can pick out of a list, so the picker needs
+    the root's display name -- read from the head config, so a tree created
+    directly (never migrated from a named model) still shows something."""
+
+    store_path = str(tmp_path / "store.sqlite3")
+    first = create_tree(_config(), actor_type="human", actor_id="test", db_path=store_path)
+    renamed = _config()
+    renamed["nodes"][0]["name"] = "Portafoglio Globale"
+    second = create_tree(renamed, actor_type="human", actor_id="test", db_path=store_path)
+
+    status, payload = api.handle_get("/api/trees", db_path=store_path)
+
+    assert status == 200
+    by_id = {t["tree_id"]: t for t in payload["trees"]}
+    assert by_id[first.tree_id]["name"] == "Root"
+    assert by_id[second.tree_id]["name"] == "Portafoglio Globale"
+    assert by_id[second.tree_id]["revision_id"] == second.revision_id
+
+
 def test_an_oversized_tree_is_an_http_error_not_a_dropped_request(tmp_path) -> None:
     """``TreeTooLargeError`` is a supported outcome for a valid tree, and only
     ``ApiError`` reaches the HTTP layer's error translation -- without this the

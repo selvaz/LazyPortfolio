@@ -228,8 +228,10 @@
     <div class="coord-head"><span>Coordinatore albero</span><button class="button" id="coordinatorCloseBtn" title="Chiudi">Chiudi</button></div>
     <div class="coord-body">
       <p style="font-size:12px;color:var(--muted);margin-top:0">Parla all'albero nel suo insieme: il coordinatore decide quali nodi consultare e delega ai loro advisor, che restano gli unici a poter proporre view -- sempre con la tua approvazione. Puo anche aiutarti a costruire una bozza di albero, che resta da salvare a mano.</p>
-      <label style="font-size:11px;font-weight:650">tree_id <span style="font-weight:400;color:var(--muted)">-- vuoto per costruire un albero nuovo</span></label>
-      <input type="text" id="coordinatorTreeId" placeholder="UUID del tree, oppure vuoto per partire da zero">
+      <label style="font-size:11px;font-weight:650">Albero</label>
+      <select id="coordinatorTreeSelect" style="width:100%;border:1px solid var(--line);border-radius:5px;padding:6px 8px;box-sizing:border-box;font-size:12px;margin-bottom:6px">
+        <option value="">Nessuno -- costruiamone uno nuovo</option>
+      </select>
       <label style="font-size:11px;font-weight:650">messaggio</label>
       <textarea id="coordinatorInput" placeholder="es. rivedi l'albero, il rischio inflazione sta salendo -- oppure: aiutami a costruire un albero regionale a 4 blocchi"></textarea>
       <div style="margin-top:8px"><button class="button primary" id="coordinatorSendBtn">Invia</button></div>
@@ -865,19 +867,39 @@
     function placeCoordinator() {
       $c('coordinatorPane').classList.toggle('beside-advisor', !$c('advisorPane').classList.contains('hidden'));
     }
+    // Refreshed on every open rather than once at load: a tree onboarded
+    // while the panel was closed would otherwise never appear.
+    async function loadTrees() {
+      const select = $c('coordinatorTreeSelect');
+      const chosen = select.value;
+      try {
+        const { trees } = await jsonFetch('/api/trees');
+        select.innerHTML = '<option value="">Nessuno -- costruiamone uno nuovo</option>';
+        trees.forEach((tree) => {
+          const option = document.createElement('option');
+          option.value = tree.tree_id;
+          option.textContent = tree.name + ' (' + tree.tree_id.slice(0, 8) + ')';
+          select.appendChild(option);
+        });
+        select.value = chosen;
+      } catch (error) { log('Elenco alberi non caricato: ' + error.message); }
+    }
+
     $c('coordinatorToggleBtn').onclick = () => {
-      $c('coordinatorPane').classList.toggle('hidden');
+      const pane = $c('coordinatorPane');
+      pane.classList.toggle('hidden');
       placeCoordinator();
+      if (!pane.classList.contains('hidden')) loadTrees();
     };
     $c('advisorToggleBtn').addEventListener('click', placeCoordinator);
     $c('coordinatorCloseBtn').onclick = () => $c('coordinatorPane').classList.add('hidden');
 
     $c('coordinatorSendBtn').onclick = async () => {
       const btn = $c('coordinatorSendBtn');
-      // No tree_id means "help me build my first one": the coordinator runs
-      // with the builder only, since there are no node advisors to consult
-      // and nothing to propose on yet.
-      const treeId = $c('coordinatorTreeId').value.trim() || DRAFT_TREE;
+      // No tree selected means "help me build my first one": the coordinator
+      // runs with the builder only, since there are no node advisors to
+      // consult and nothing to propose on yet.
+      const treeId = $c('coordinatorTreeSelect').value || DRAFT_TREE;
       const text = $c('coordinatorInput').value.trim();
       if (!text) { log('Scrivi un messaggio.'); return; }
       // One turn at a time: a second send while the first is still running

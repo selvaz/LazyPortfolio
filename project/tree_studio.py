@@ -70,7 +70,7 @@ INDEX_FILE = APP_DIR / "tree_studio.html"
 #: /api/advisor/. Matched in full so a saved model named "summary" or
 #: "proposals" still reaches /api/models/{name}.
 _ADVISOR_TREE_GET = re.compile(
-    r"^/api/trees/[^/]+/(summary|proposals|nodes/[^/]+/advisor/context)$"
+    r"^/api/trees(/[^/]+/(summary|proposals|nodes/[^/]+/advisor/context))?$"
 )
 _ADVISOR_TREE_POST = re.compile(r"^/api/trees/[^/]+/coordinator/conversations$")
 _TICKER = re.compile(r"^[A-Za-z0-9.\-]+$")

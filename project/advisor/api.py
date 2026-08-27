@@ -31,6 +31,7 @@ _JOB = re.compile(r"^/api/advisor/jobs/(?P<job_id>[^/]+)$")
 _PROPOSAL = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)$")
 _PROPOSAL_APPROVE = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)/approve$")
 _PROPOSAL_REJECT = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)/reject$")
+_TREES = re.compile(r"^/api/trees$")
 _TREE_SUMMARY = re.compile(r"^/api/trees/(?P<tree_id>[^/]+)/summary$")
 _TREE_PROPOSALS = re.compile(r"^/api/trees/(?P<tree_id>[^/]+)/proposals$")
 #: The coordinator's conversation routes are separate from the per-node ones
@@ -61,6 +62,9 @@ def handle_get(
     db_path: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     query = query or {}
+
+    if _TREES.match(path):
+        return 200, {"ok": True, "trees": services.list_trees(db_path=db_path)}
 
     match = _TREE_SUMMARY.match(path)
     if match:

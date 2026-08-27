@@ -190,4 +190,52 @@ def get_head(
     )
 
 
-__all__ = ["ConcurrentTreeWrite", "TreeRevision", "create_tree", "get_head", "save_revision"]
+def list_trees(*, db_path: str | os.PathLike[str] | None = None) -> list[dict[str, str]]:
+    """Every onboarded tree as ``{tree_id, name, revision_id, updated_at}``.
+
+    ``name`` is the display name of the root node, which is what a person
+    recognises -- a ``tree_id`` is a UUID nobody can pick out of a list. It is
+    not unique and carries no authority: the id is still the identity, and the
+    name is read out of the head revision's own config rather than from
+    ``legacy_tree_names``, so a tree created directly (never migrated from a
+    named model) still shows something recognisable.
+    """
+
+    with closing(_db.connect(db_path)) as conn:
+        rows = conn.execute(
+            "SELECT h.tree_id, r.revision_id, r.config_json, r.created_at "
+            "FROM tree_heads h JOIN tree_revisions r ON r.revision_id = h.head_revision_id "
+            "ORDER BY r.created_at DESC"
+        ).fetchall()
+
+    trees: list[dict[str, str]] = []
+    for tree_id, revision_id, config_json, created_at in rows:
+        config = json.loads(config_json)
+        root_id = config.get("root_id")
+        name = next(
+            (
+                str(node.get("name") or root_id)
+                for node in config.get("nodes") or []
+                if node.get("id") == root_id
+            ),
+            str(root_id or "senza nome"),
+        )
+        trees.append(
+            {
+                "tree_id": str(tree_id),
+                "name": name,
+                "revision_id": str(revision_id),
+                "updated_at": str(created_at),
+            }
+        )
+    return trees
+
+
+__all__ = [
+    "ConcurrentTreeWrite",
+    "TreeRevision",
+    "create_tree",
+    "get_head",
+    "list_trees",
+    "save_revision",
+]
