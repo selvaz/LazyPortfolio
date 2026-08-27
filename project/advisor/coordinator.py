@@ -292,6 +292,26 @@ def _build_consult_tool(
 
         try:
             context = services.get_node_context(tree_id, node_id, db_path=db_path)
+            # Before reasoning, not only before writing: the context carries
+            # its own revision, and an explanation drawn from a revision the
+            # turn never pinned would still be presented and audited as an
+            # answer about the pinned one. Reading it off the context costs
+            # nothing extra -- the later check exists for a head that moves
+            # *during* the call, which this one cannot see.
+            if str(context.revision_id) != pinned_revision_id:
+                refusal = (
+                    "the tree changed since this turn started (pinned "
+                    f"{pinned_revision_id}, this node is now at "
+                    f"{context.revision_id}); ask again"
+                )
+                _audit(
+                    conversation_id,
+                    {**event, "status": "refused_stale_revision", "message": refusal},
+                    pinned_revision_id=pinned_revision_id,
+                    db_path=db_path,
+                    best_effort=True,
+                )
+                return {"node_id": node_id, "route": "refused", "message": refusal}
             result = advisor_agent.run_node_turn(
                 node_id,
                 instruction,

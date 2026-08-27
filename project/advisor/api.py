@@ -17,7 +17,7 @@ import re
 from typing import Any
 from uuid import UUID
 
-from lazyportfolio.advisor.node_universe import NodeNotFoundError
+from lazyportfolio.advisor.node_universe import NodeNotFoundError, TreeTooLargeError
 from project.advisor import jobs, services
 
 _NODE_CONTEXT = re.compile(
@@ -68,6 +68,11 @@ def handle_get(
             summary = services.get_tree_summary(match["tree_id"], db_path=db_path)
         except services.TreeNotFound as exc:
             raise ApiError(404, f"tree not found: {exc}") from exc
+        except TreeTooLargeError as exc:
+            # A real, supported outcome for a valid tree, not a bug: without
+            # this the caller gets a dropped connection instead of an answer,
+            # because the HTTP layer only translates ApiError.
+            raise ApiError(413, f"tree too large to summarize: {exc}") from exc
         return 200, {"ok": True, "summary": summary}
 
     match = _TREE_PROPOSALS.match(path)

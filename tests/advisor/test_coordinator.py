@@ -404,6 +404,55 @@ def test_the_insert_itself_refuses_a_head_that_moved(monkeypatch, tree, frame) -
     assert proposal_repository.transition is real_transition
 
 
+def test_an_explanation_from_a_revision_the_turn_never_pinned_is_refused(
+    monkeypatch, tree, conversation
+) -> None:
+    """An explain path files nothing, so it is tempting to let it through --
+    but an answer drawn from a revision this turn never saw would still be
+    presented, and audited, as an answer about the pinned one."""
+
+    revision, store_path = tree
+    monkeypatch.setattr(advisor_agent, "run_node_turn", lambda *a, **k: _explain_result())
+    tool = _build(tree, conversation)
+
+    save_revision(
+        revision.tree_id,
+        _config(),
+        actor_type="human",
+        actor_id="someone-else",
+        db_path=store_path,
+    )
+    result = tool.func("why is this node weighted like that?")
+
+    assert result["route"] == "refused"
+    assert "changed since this turn started" in result["message"]
+
+
+def test_an_oversized_tree_is_an_http_error_not_a_dropped_request(monkeypatch, tree) -> None:
+    """``TreeTooLargeError`` is a supported outcome for a valid tree; only
+    ``ApiError`` reaches the HTTP layer's error translation."""
+
+    from project.advisor import api
+
+    from lazyportfolio.advisor import node_universe
+
+    revision, store_path = tree
+
+    # Patched rather than driven by a real oversized tree: the caps are bound
+    # as default arguments, so setting the module constant would not change
+    # what the already-defined function uses.
+    def _too_large(*args: Any, **kwargs: Any):
+        raise node_universe.TreeTooLargeError("tree has more than 1 nodes")
+
+    monkeypatch.setattr(node_universe, "build_tree_summary", _too_large)
+
+    with pytest.raises(api.ApiError) as caught:
+        api.handle_get(f"/api/trees/{revision.tree_id}/summary", db_path=store_path)
+
+    assert caught.value.status == 413
+    assert "too large" in caught.value.message
+
+
 def test_an_explain_turn_files_nothing_but_is_still_audited(
     monkeypatch, tree, conversation
 ) -> None:
