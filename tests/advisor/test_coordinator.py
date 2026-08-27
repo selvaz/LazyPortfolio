@@ -25,6 +25,7 @@ pytest.importorskip("lazytools", reason="the coordinator requires lazytools")
 from project.advisor import agent as advisor_agent  # noqa: E402
 from project.advisor import api, coordinator, services  # noqa: E402
 
+from lazyportfolio.advisor.contracts import COMPOUND_KIND, proposal_node_views  # noqa: E402
 from lazyportfolio.advisor.repository import create_tree, get_head, save_revision  # noqa: E402
 from lazyportfolio.backend import OptimizationDataset  # noqa: E402
 
@@ -117,13 +118,24 @@ def conversation(tree):
     )
 
 
+#: What each node may legitimately hold a view on. A view outside a node's own
+#: universe is refused by the validator, so a stub returning one shape for
+#: every node would be testing the refusal, not the path under test.
+_VIEWS_BY_NODE = {
+    "root": {"ticker:SPY": 1.0, "ticker:AGG": -1.0},
+    "equity": {"ticker:SPY": 1.0, "ticker:TLT": -1.0},
+    "bond": {"ticker:AGG": 1.0, "ticker:TLT": -1.0},
+}
+
+
 def _proposes(*args: Any, **kwargs: Any) -> advisor_agent.AdvisorTurnResult:
+    node_id = kwargs["context"].node_id
     return advisor_agent.AdvisorTurnResult(
         route="propose",
-        message="SPY over TLT.",
+        message=f"A relative view on {node_id}.",
         proposed_views=[
             advisor_agent.CandidateView(
-                instruments={"ticker:SPY": 1.0, "ticker:TLT": -1.0},
+                instruments=_VIEWS_BY_NODE[node_id],
                 expected_return=0.03,
                 confidence=0.6,
                 rationale="test",
@@ -143,7 +155,7 @@ def _scope(tree, conversation, *, run_turn, budget=6, backend=None, **overrides)
         pinned_revision_id=overrides.get("pinned_revision_id", revision.revision_id),
         batch_id=overrides.get("batch_id", uuid4()),
         budget=coordinator.ConsultationBudget(budget),
-        proposed_nodes=overrides.get("proposed_nodes", set()),
+        staged=overrides.get("staged", {}),
         caller_id="test",
         conversation_id=conversation.conversation_id,
         model="test-model",
@@ -309,30 +321,105 @@ def test_the_insert_itself_refuses_a_head_that_moved(tree, frame) -> None:
 
 
 # --------------------------------------------------------------------- #
-# One proposal per turn
+# Staging and the turn's single compound proposal
 # --------------------------------------------------------------------- #
-def test_only_one_proposal_is_created_per_turn_even_across_nodes(
-    tree, conversation, frame
-) -> None:
-    """Proposals from one turn share a base revision, so approving one makes
-    the rest impossible to apply. The second is refused rather than filed as a
-    card that could never be approved -- and that holds for a *different* node,
-    not only a repeat of the same one."""
+def test_a_consultation_stages_candidates_and_files_nothing(tree, conversation, frame) -> None:
+    """Nothing is written until the turn ends: a consultation that reported a
+    proposal filed would be describing a change the human cannot yet see or
+    approve, and could not be combined with a sibling node's."""
 
     revision, store_path = tree
     scope = _scope(tree, conversation, run_turn=_proposes, backend=_FakeBackend(frame))
+
+    result = coordinator._build_consult_tool("equity", CHILDREN, scope).func("propose")
+
+    assert result["route"] == "staged"
+    assert "equity" in scope.staged
+    assert services.list_proposals(revision.tree_id, db_path=store_path) == []
+
+
+def test_several_nodes_become_one_proposal_approved_as_a_unit(
+    tree, conversation, frame
+) -> None:
+    """The point of the compound proposal: two nodes changed in one turn are
+    one thing to approve, so approving it cannot leave the other stranded
+    against a base revision that has moved."""
+
+    revision, store_path = tree
+    backend = _FakeBackend(frame)
+    scope = _scope(tree, conversation, run_turn=_proposes, backend=backend)
+    coordinator._build_consult_tool("equity", CHILDREN, scope).func("propose")
+    coordinator._build_consult_tool("bond", CHILDREN, scope).func("propose")
+
+    proposal_id, error = coordinator._file_staged_proposal(
+        scope, model="test-model", backend=backend, db_path=store_path
+    )
+
+    assert error is None and proposal_id
+    (record,) = services.list_proposals(revision.tree_id, db_path=store_path)
+    assert record.proposal.kind == COMPOUND_KIND
+    assert set(proposal_node_views(record.proposal)) == {"equity", "bond"}
+    assert record.proposal.node_id is None, "a compound proposal has no single node"
+
+    services.approve_proposal(
+        record.proposal.id,
+        proposal_hash=record.proposal.content_hash,
+        approved_by="test",
+        idempotency_key="compound-key",
+        db_path=store_path,
+    )
+
+    head = get_head(revision.tree_id, db_path=store_path)
+    assert head is not None
+    assert head.revision_id != revision.revision_id, "one revision for the whole change"
+    by_id = {n["id"]: n for n in head.config["nodes"]}
+    assert by_id["equity"]["constraints"]["views"], "equity's views were not applied"
+    assert by_id["bond"]["constraints"]["views"], "bond's views were not applied"
+
+
+def test_a_node_can_only_be_staged_once_in_a_turn(tree, conversation, frame) -> None:
+    """Last-write-wins would make the turn's outcome depend on the order two
+    concurrent consultations happened to finish in."""
+
+    scope = _scope(tree, conversation, run_turn=_proposes, backend=_FakeBackend(frame))
     equity = coordinator._build_consult_tool("equity", CHILDREN, scope)
-    bond = coordinator._build_consult_tool("bond", CHILDREN, scope)
 
-    first = equity.func("propose something")
-    same_again = equity.func("propose something else")
-    other_node = bond.func("propose something here too")
+    first = equity.func("propose")
+    second = equity.func("propose something else")
 
-    assert first["route"] == "propose" and first["proposal_id"]
-    assert same_again["route"] == "refused"
-    assert other_node["route"] == "refused"
-    assert "already created for node equity" in other_node["message"]
-    assert len(services.list_proposals(revision.tree_id, db_path=store_path)) == 1
+    assert first["route"] == "staged"
+    assert second["route"] == "refused"
+    assert "already has candidate views staged" in second["message"]
+    assert len(scope.staged["equity"]) == 1
+
+
+def test_an_invalid_candidate_fails_its_own_consultation(tree, conversation, frame) -> None:
+    """Validated when staged as well as at creation: otherwise one bad node
+    would poison the whole compound at the end and take the valid ones down."""
+
+    def _proposes_outside_universe(*args: Any, **kwargs: Any):
+        return advisor_agent.AdvisorTurnResult(
+            route="propose",
+            message="AGG belongs to the bond node, not equity's",
+            proposed_views=[
+                advisor_agent.CandidateView(
+                    instruments={"ticker:AGG": 1.0},
+                    expected_return=0.03,
+                    confidence=0.6,
+                    rationale="test",
+                )
+            ],
+        )
+
+    scope = _scope(
+        tree, conversation, run_turn=_proposes_outside_universe, backend=_FakeBackend(frame)
+    )
+
+    result = coordinator._build_consult_tool("equity", CHILDREN, scope).func("propose")
+
+    assert result["route"] == "refused"
+    assert "instrument_outside_universe" in result["message"]
+    assert scope.staged == {}
 
 
 def test_a_proposal_is_written_in_one_commit_at_its_final_status(tree, frame) -> None:
@@ -362,30 +449,31 @@ def test_a_proposal_is_written_in_one_commit_at_its_final_status(tree, frame) ->
     assert record.status == "pending_approval", "a proposal was left mid-write"
 
 
-def test_a_failed_persist_releases_the_node_for_a_retry(tree, conversation, frame) -> None:
-    """Dedup must not punish a failure: a node nothing was filed for is still
-    a node worth asking again -- so the retry has to actually succeed."""
+def test_a_failed_filing_is_reported_and_does_not_lose_the_candidates(
+    tree, conversation, frame
+) -> None:
+    """The turn's one write can fail after the consultations succeeded. That
+    has to come back as an error the caller sees, with the staged work still
+    intact, rather than a silently empty turn."""
 
     revision, store_path = tree
 
-    class _FailsOnce(_FakeBackend):
-        calls = 0
-
+    class _Broken(_FakeBackend):
         def load_returns(self, *args: Any, **kwargs: Any):
-            _FailsOnce.calls += 1
-            if _FailsOnce.calls == 1:
-                raise RuntimeError("market data unavailable")
-            return super().load_returns(*args, **kwargs)
+            raise RuntimeError("market data unavailable")
 
-    scope = _scope(tree, conversation, run_turn=_proposes, backend=_FailsOnce(frame))
-    tool = coordinator._build_consult_tool("equity", CHILDREN, scope)
+    scope = _scope(tree, conversation, run_turn=_proposes, backend=_Broken(frame))
+    coordinator._build_consult_tool("equity", CHILDREN, scope).func("propose")
 
-    failed = tool.func("propose something")
-    retried = tool.func("propose something")
+    proposal_id, error = coordinator._file_staged_proposal(
+        scope, model="test-model", backend=_Broken(frame), db_path=store_path
+    )
 
-    assert "market data unavailable" in failed["error"]
-    assert retried["route"] == "propose" and retried["proposal_id"]
-    assert len(services.list_proposals(revision.tree_id, db_path=store_path)) == 1
+    assert proposal_id is None
+    assert "market data unavailable" in error
+    assert scope.staged["equity"], "the staged candidates were discarded"
+    assert services.list_proposals(revision.tree_id, db_path=store_path) == []
+    assert "proposal_create_failed" in [e["status"] for e in _events(conversation, store_path)]
 
 
 # --------------------------------------------------------------------- #
@@ -431,19 +519,14 @@ def test_a_coordinator_proposal_carries_its_batch_and_producer(
 ) -> None:
     revision, store_path = tree
     batch_id = uuid4()
-    tool = coordinator._build_consult_tool(
-        "equity",
-        CHILDREN,
-        _scope(
-            tree,
-            conversation,
-            run_turn=_proposes,
-            backend=_FakeBackend(frame),
-            batch_id=batch_id,
-        ),
+    backend = _FakeBackend(frame)
+    scope = _scope(
+        tree, conversation, run_turn=_proposes, backend=backend, batch_id=batch_id
     )
-
-    tool.func("propose something")
+    coordinator._build_consult_tool("equity", CHILDREN, scope).func("propose something")
+    coordinator._file_staged_proposal(
+        scope, model="test-model", backend=backend, db_path=store_path
+    )
 
     records = services.list_proposals(revision.tree_id, batch_id=batch_id, db_path=store_path)
     assert len(records) == 1
@@ -569,17 +652,14 @@ def test_proposals_are_listed_by_tree_and_batch_together(tree, conversation, fra
 
     revision, store_path = tree
     batch_id = uuid4()
-    coordinator._build_consult_tool(
-        "equity",
-        CHILDREN,
-        _scope(
-            tree,
-            conversation,
-            run_turn=_proposes,
-            backend=_FakeBackend(frame),
-            batch_id=batch_id,
-        ),
-    ).func("propose something")
+    backend = _FakeBackend(frame)
+    scope = _scope(
+        tree, conversation, run_turn=_proposes, backend=backend, batch_id=batch_id
+    )
+    coordinator._build_consult_tool("equity", CHILDREN, scope).func("propose something")
+    coordinator._file_staged_proposal(
+        scope, model="test-model", backend=backend, db_path=store_path
+    )
 
     other_tree = create_tree(_config(), actor_type="human", actor_id="other", db_path=store_path)
     status, payload = api.handle_get(

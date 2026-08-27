@@ -30,8 +30,12 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from lazyportfolio.advisor.canonical import content_hash
-from lazyportfolio.advisor.contracts import ChangeProposal, SnapshotDescriptor
-from lazyportfolio.advisor.node_universe import apply_views_to_config
+from lazyportfolio.advisor.contracts import (
+    ChangeProposal,
+    SnapshotDescriptor,
+    proposal_node_views,
+)
+from lazyportfolio.advisor.node_universe import apply_node_views_to_config
 from lazyportfolio.advisor.patch import validate_patch
 from lazyportfolio.v2 import db as _db
 from lazyportfolio.v2.model import V2Model
@@ -142,8 +146,12 @@ def apply_proposal(
             )
 
         # Step 5 -- rebuild/validate the patch server-side; a client-supplied
-        # patch is never trusted, only node_id + proposed_views are read.
-        validate_patch(proposal.patch, proposal.node_id)
+        # patch is never trusted, only the resolved scope is read. Resolving
+        # through proposal_node_views rather than reading node_id directly is
+        # what stops a payload whose fields contradict its kind from having
+        # one scope shown to the human and another one applied here.
+        node_views = proposal_node_views(proposal)
+        validate_patch(proposal.patch, node_views.keys())
 
         # Step 6 -- recompute the data fingerprint.
         current_fingerprint = recompute_fingerprint(proposal.snapshot)
@@ -161,7 +169,10 @@ def apply_proposal(
         ).fetchone()
         assert head_config_row is not None  # tree_heads' FK guarantees this row exists
         base_config = json.loads(head_config_row[0])
-        new_config = apply_views_to_config(base_config, proposal.node_id, proposal.proposed_views)
+        # Every declared node in one copy and one pass, so a compound proposal
+        # becomes exactly one revision -- applying them as N revisions would
+        # make each one's base stale for the next.
+        new_config = apply_node_views_to_config(base_config, node_views)
         V2Model.from_config(new_config)  # raises ValueError on an invalid resulting tree
 
         # Step 8 -- insert the new tree_revision.

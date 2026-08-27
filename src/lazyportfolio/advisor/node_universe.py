@@ -333,21 +333,45 @@ def apply_views_to_config(
     own copy of the same patch logic.
     """
 
+    return apply_node_views_to_config(config, {node_id: views})
+
+
+def apply_node_views_to_config(
+    config: dict[str, Any], node_views: dict[str, list[ProposedView]]
+) -> dict[str, Any]:
+    """Return one deep copy of ``config`` with every node's views replaced.
+
+    One copy and one pass for the whole mapping, rather than chaining the
+    single-node helper: chaining deep-copies the tree once per node, and only
+    produces the right answer if every intermediate result is reassigned --
+    a mistake that would silently apply just the last node. This also fails
+    loudly when a declared node does not exist, instead of applying the ones
+    that do.
+    """
+
+    if not node_views:
+        raise ValueError("node_views must declare at least one node")
+
     new_config = copy.deepcopy(config)
+    remaining = set(node_views)
     for node in new_config.get("nodes", []):
-        if str(node.get("id")) == node_id:
-            constraints = node.setdefault("constraints", {})
-            constraints["views"] = [
-                {
-                    "instruments": {ticker(k): float(v) for k, v in view.instruments.items()},
-                    "expected_return": view.expected_return,
-                    "confidence": view.confidence,
-                    "source": view.source,
-                }
-                for view in views
-            ]
-            return new_config
-    raise NodeNotFoundError(node_id)
+        node_id = str(node.get("id"))
+        if node_id not in remaining:
+            continue
+        remaining.discard(node_id)
+        constraints = node.setdefault("constraints", {})
+        constraints["views"] = [
+            {
+                "instruments": {ticker(k): float(v) for k, v in view.instruments.items()},
+                "expected_return": view.expected_return,
+                "confidence": view.confidence,
+                "source": view.source,
+            }
+            for view in node_views[node_id]
+        ]
+    if remaining:
+        raise NodeNotFoundError(", ".join(sorted(remaining)))
+    return new_config
 
 
 __all__ = [
@@ -355,6 +379,7 @@ __all__ = [
     "MAX_SUMMARY_NODES",
     "NodeNotFoundError",
     "TreeTooLargeError",
+    "apply_node_views_to_config",
     "apply_views_to_config",
     "build_tree_summary",
     "find_node",

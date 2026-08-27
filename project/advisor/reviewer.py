@@ -22,6 +22,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from lazyportfolio.advisor.contracts import COMPOUND_KIND
+
 
 class ReviewFinding(BaseModel):
     severity: Literal["info", "warning", "critical"]
@@ -77,9 +79,16 @@ def review_proposal(
 
     from lazytools.connectors.code_support import claude_code
 
+    # A compound proposal carries its views per node and leaves proposed_views
+    # empty; reading the latter alone would review an empty change.
+    views = (
+        proposal.get("node_views")
+        if proposal.get("kind") == COMPOUND_KIND
+        else proposal.get("proposed_views", [])
+    )
     prompt = _REVIEW_PROMPT_TEMPLATE.format(
         rationale=proposal.get("rationale", ""),
-        views_json=json.dumps(proposal.get("proposed_views", [])),
+        views_json=json.dumps(views),
         delta_json=json.dumps(proposal.get("counterfactual", {}).get("delta", {})),
     )
     if mode == "claude_code":

@@ -9,6 +9,8 @@ client-supplied one.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from lazyportfolio.advisor.contracts import JsonPatchOperation
 
 
@@ -22,27 +24,49 @@ def views_patch_path(node_id: str) -> str:
     return f"/nodes/{node_id}/constraints/views"
 
 
-def validate_patch(patch: list[JsonPatchOperation], node_id: str) -> None:
-    """Raise :class:`DisallowedPatchError` unless ``patch`` is exactly one
-    ``replace`` operation on ``node_id``'s ``constraints/views`` path.
+def validate_patch(patch: list[JsonPatchOperation], node_ids: str | Iterable[str]) -> None:
+    """Raise unless ``patch`` is exactly one ``replace`` per declared node.
 
-    Rejects empty patches too: a proposal with no patch operations changes
-    nothing and should never have reached the approval step.
+    Set equality, not merely "every operation is permitted": a patch that
+    touches only some of the declared nodes would apply a change the proposal
+    was not approved for, and a patch with a duplicate path would silently
+    let one operation override another. So the operation paths and the
+    declared nodes must correspond one to one.
+
+    Accepts a bare ``node_id`` for the single-node case, which is every
+    proposal written before compound ones existed.
     """
 
+    declared = {node_ids} if isinstance(node_ids, str) else set(node_ids)
+    if not declared:
+        raise DisallowedPatchError("a proposal must declare at least one node")
     if not patch:
         raise DisallowedPatchError("patch must contain at least one operation")
-    allowed_path = views_patch_path(node_id)
+
+    allowed = {views_patch_path(node_id): node_id for node_id in declared}
+    seen: set[str] = set()
     for operation in patch:
         if operation.op != "replace":
             raise DisallowedPatchError(
                 f"op {operation.op!r} is not allowed in the MVP; only 'replace' is"
             )
-        if operation.path != allowed_path:
+        if operation.path not in allowed:
             raise DisallowedPatchError(
-                f"path {operation.path!r} is not allowed in the MVP; only "
-                f"{allowed_path!r} (node {node_id!r}'s own views) is"
+                f"path {operation.path!r} is not allowed; only the declared nodes' "
+                f"own views are: {sorted(allowed)}"
             )
+        if operation.path in seen:
+            raise DisallowedPatchError(
+                f"path {operation.path!r} appears twice; one operation would "
+                "silently override the other"
+            )
+        seen.add(operation.path)
+
+    missing = set(allowed) - seen
+    if missing:
+        raise DisallowedPatchError(
+            f"patch does not touch every declared node; missing {sorted(missing)}"
+        )
 
 
 __all__ = ["DisallowedPatchError", "validate_patch", "views_patch_path"]

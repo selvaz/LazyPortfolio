@@ -245,6 +245,14 @@
   </aside>
   <script>
   const $ = (id) => document.getElementById(id);
+  // A proposal's scope comes from its kind, never from node_id alone: a
+  // compound proposal has no single node, and showing one while approval
+  // applies several is exactly the mismatch this avoids.
+  function proposalScope(proposal) {
+    return proposal.kind === 'replace_nodes_views'
+      ? Object.keys(proposal.node_views || {}).sort().join(' + ')
+      : proposal.node_id;
+  }
   let state = null, selectedId = null, activeView = 'build';
   let mapZoom = 1, expandedMapTickers = new Set(), collapsedMapNodes = new Set();
   const MAP_ZOOM_MIN = 0.3, MAP_ZOOM_MAX = 2, MAP_ZOOM_STEP = 0.1;
@@ -602,7 +610,7 @@
       card.className = 'advisor-card';
       const title = document.createElement('div');
       title.className = 'advisor-card-title';
-      title.textContent = proposal.node_id + ' -- ' + proposal.id.slice(0, 8);
+      title.textContent = proposalScope(proposal) + ' -- ' + proposal.id.slice(0, 8);
       card.appendChild(title);
       card.appendChild(statusPill(status));
       const delta = document.createElement('pre');
@@ -774,7 +782,7 @@
       card.className = 'advisor-card';
       const title = document.createElement('div');
       title.className = 'advisor-card-title';
-      title.textContent = proposal.node_id + ' -- ' + proposal.id.slice(0, 8);
+      title.textContent = proposalScope(proposal) + ' -- ' + proposal.id.slice(0, 8);
       card.appendChild(title);
       const pill = document.createElement('span');
       pill.className = 'advisor-status-pill ' + status;
@@ -795,7 +803,7 @@
               idempotency_key: 'coord-' + Date.now(),
               approved_by: 'local-user',
             });
-            log('Approvata ' + proposal.node_id + ': revisione ' + result.new_revision_id.slice(0, 8));
+            log('Approvata ' + proposalScope(proposal) + ': revisione ' + result.new_revision_id.slice(0, 8));
             card.remove();
             // The approval already committed, so a confirmation that fails is
             // a finding to report -- never something that undoes the approval
@@ -807,7 +815,7 @@
                 : 'CONFERMA FALLITA: scostamento massimo ' + check.max_abs_deviation.toExponential(2)
                   + ' su ' + Object.keys(check.deviations).join(', '));
             } catch (error) { log('Conferma non eseguita: ' + error.message); }
-          } catch (error) { log('Errore approvazione ' + proposal.node_id + ': ' + error.message); }
+          } catch (error) { log('Errore approvazione ' + proposalScope(proposal) + ': ' + error.message); }
         };
         const reject = document.createElement('button');
         reject.className = 'button danger';
@@ -816,7 +824,7 @@
         reject.onclick = async () => {
           try {
             await jsonFetch('/api/advisor/proposals/' + proposal.id + '/reject', { rejected_by: 'local-user' });
-            log('Rifiutata ' + proposal.node_id);
+            log('Rifiutata ' + proposalScope(proposal));
             card.remove();
           } catch (error) { log('Errore rifiuto: ' + error.message); }
         };

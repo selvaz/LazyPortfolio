@@ -31,6 +31,8 @@ from lazyportfolio.advisor import repository as tree_repository
 from lazyportfolio.advisor import snapshot as snapshot_service
 from lazyportfolio.advisor.canonical import content_hash
 from lazyportfolio.advisor.contracts import (
+    COMPOUND_KIND,
+    SINGLE_KIND,
     ChangeProposal,
     JsonPatchOperation,
     ModelProvenance,
@@ -188,11 +190,40 @@ def post_message_and_enqueue(
 # --------------------------------------------------------------------- #
 # Proposal preparation (the fixture job handler)
 # --------------------------------------------------------------------- #
-def create_proposal(
+def validate_candidate_views(
     tree_id: str,
     node_id: str,
     views: list[dict[str, Any]],
     *,
+    db_path: str | os.PathLike[str] | None = None,
+) -> None:
+    """Check one node's candidate views, without building a proposal.
+
+    For a caller that stages candidates before filing anything: without this,
+    a bad candidate would only be caught when the whole compound proposal is
+    created, and would take the valid ones down with it.
+    """
+
+    head = tree_repository.get_head(tree_id, db_path=db_path)
+    if head is None:
+        raise TreeNotFound(tree_id)
+    validation = node_universe.validate_view_set(
+        head.config,
+        node_id,
+        [ProposedView(**view) for view in views],
+        mode=mode_from_config(head.config),
+    )
+    if not validation.valid:
+        messages = "; ".join(f"{e.code}: {e.message}" for e in validation.errors)
+        raise ValueError(f"proposed views failed validation: {messages}")
+
+
+def create_proposal(
+    tree_id: str,
+    node_id: str | None = None,
+    views: list[dict[str, Any]] | None = None,
+    *,
+    node_views: dict[str, list[dict[str, Any]]] | None = None,
     caller_id: str,
     rationale: str = "Fixture proposal (Fase 3: no LLM in this phase).",
     producer_kind: ProducerKind = "interactive_chat",
@@ -231,6 +262,9 @@ def create_proposal(
     guard.
     """
 
+    if (node_views is None) == (node_id is None):
+        raise ValueError("pass exactly one of node_id/views or node_views")
+
     head = tree_repository.get_head(tree_id, db_path=db_path)
     if head is None:
         raise TreeNotFound(tree_id)
@@ -239,16 +273,40 @@ def create_proposal(
             f"tree {tree_id} moved from {expected_revision_id} to {head.revision_id}"
         )
     mode = mode_from_config(head.config)
-    proposed_views = [ProposedView(**view) for view in views]
+    scope: dict[str, list[ProposedView]] = (
+        {node_id: [ProposedView(**view) for view in views]}
+        if node_views is None
+        else {
+            node: [ProposedView(**view) for view in node_view_dicts]
+            for node, node_view_dicts in node_views.items()
+        }
+    )
+    if not scope:
+        raise ValueError("a proposal must cover at least one node")
 
-    validation = node_universe.validate_view_set(head.config, node_id, proposed_views, mode=mode)
-    if not validation.valid:
-        messages = "; ".join(f"{e.code}: {e.message}" for e in validation.errors)
-        raise ValueError(f"proposed views failed validation: {messages}")
+    # Each node against its own universe: the per-node allowlist is unchanged
+    # by there being several of them. Issue paths are prefixed with the node
+    # so a compound failure says which node failed, not just "views[0]".
+    errors: list[str] = []
+    validation = None
+    for node, node_scope_views in sorted(scope.items()):
+        node_validation = node_universe.validate_view_set(
+            head.config, node, node_scope_views, mode=mode
+        )
+        if validation is None:
+            validation = node_validation
+        if not node_validation.valid:
+            errors.extend(f"{node}: {e.code}: {e.message}" for e in node_validation.errors)
+    if errors:
+        raise ValueError(f"proposed views failed validation: {'; '.join(errors)}")
+    assert validation is not None  # scope is non-empty, so the loop ran
 
     _, dataset, snapshot = snapshot_service.load_snapshot(head.config, backend=backend)
-    counterfactual = counterfactual_service.evaluate_view_counterfactual(
-        head.config, node_id, proposed_views, dataset, mode=mode, periods_per_year=252.0
+    # One combined solve, never the sum of per-node previews: views do not
+    # compose, so what the human is shown must be the allocation that all of
+    # them together actually produce.
+    counterfactual = counterfactual_service.evaluate_node_views_counterfactual(
+        head.config, scope, dataset, mode=mode, periods_per_year=252.0
     )
 
     if expected_revision_id is not None:
@@ -261,8 +319,12 @@ def create_proposal(
             )
 
     now = datetime.now(UTC)
+    compound = node_views is not None
+    # Sorted, because the patch array is order-sensitive in the canonical
+    # hash: the same scope must always hash the same way.
     patch = [
-        JsonPatchOperation(op="replace", path=views_patch_path(node_id), value=None),
+        JsonPatchOperation(op="replace", path=views_patch_path(node), value=None)
+        for node in sorted(scope)
     ]
     provenance = ModelProvenance(
         producer_kind=producer_kind, producer_id=producer_id, model=model
@@ -270,15 +332,19 @@ def create_proposal(
     draft = ChangeProposal(
         id=uuid4(),
         schema_version="1.0",
-        kind="replace_node_views",
+        kind=COMPOUND_KIND if compound else SINGLE_KIND,
         batch_id=batch_id,
         tree_id=UUID(head.tree_id),
         base_revision_id=UUID(head.revision_id),
-        node_id=node_id,
+        # Exactly one representation is populated; the other stays empty, so
+        # a reader that resolves scope through proposal_node_views can never
+        # be handed two contradictory answers.
+        node_id=None if compound else node_id,
+        node_views=scope if compound else None,
         snapshot=snapshot,
         information_cutoff=now,
         patch=patch,
-        proposed_views=proposed_views,
+        proposed_views=[] if compound else scope[node_id],
         rationale=rationale,
         caveats=[],
         evidence=[],

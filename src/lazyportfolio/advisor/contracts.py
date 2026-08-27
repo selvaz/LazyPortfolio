@@ -224,11 +224,19 @@ class ChangeProposal(_PortfolioModel):
     supersedes_proposal_id: UUID | None = None
     tree_id: UUID
     base_revision_id: UUID
-    node_id: str
+    #: ``None`` only on a compound proposal, which covers several nodes and
+    #: has no single one. Never read for authority even when set: resolve the
+    #: scope through :func:`proposal_node_views`, which dispatches on ``kind``.
+    node_id: str | None = None
     snapshot: SnapshotDescriptor
     information_cutoff: datetime
     patch: list[JsonPatchOperation] = Field(default_factory=list)
     proposed_views: list[ProposedView] = Field(default_factory=list)
+    #: Set only on ``kind == COMPOUND_KIND``, where it is the authoritative
+    #: scope. A node may map to an empty list, meaning "clear this node's
+    #: views" -- so emptiness of a *value* is meaningful, while an empty
+    #: mapping is not a valid compound proposal.
+    node_views: dict[str, list[ProposedView]] | None = None
     rationale: str
     caveats: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRef] = Field(default_factory=list)
@@ -239,10 +247,61 @@ class ChangeProposal(_PortfolioModel):
     content_hash: str
 
 
+#: ``kind`` of a proposal covering exactly one node -- the only kind that
+#: existed before compound proposals, and the shape of every stored proposal
+#: written until then.
+SINGLE_KIND = "replace_node_views"
+
+#: ``kind`` of a proposal covering several nodes, applied as one unit.
+COMPOUND_KIND = "replace_nodes_views"
+
+
+class MalformedProposalScope(ValueError):
+    """The proposal's ``kind`` and its scope fields disagree."""
+
+
+def proposal_node_views(proposal: ChangeProposal) -> dict[str, list[ProposedView]]:
+    """The nodes this proposal changes, and the views to put on each.
+
+    The single place any consumer may learn a proposal's scope. Reading
+    ``node_id`` or ``proposed_views`` directly is what would let a human be
+    shown one node while approval applies several -- so this dispatches on
+    ``kind`` and refuses a payload whose fields contradict it, rather than
+    silently preferring one representation over the other.
+    """
+
+    if proposal.kind == COMPOUND_KIND:
+        if not proposal.node_views:
+            raise MalformedProposalScope(
+                f"proposal {proposal.id} is {COMPOUND_KIND!r} but declares no node_views"
+            )
+        if proposal.node_id is not None or proposal.proposed_views:
+            raise MalformedProposalScope(
+                f"proposal {proposal.id} is {COMPOUND_KIND!r} but also carries "
+                "single-node fields; the two representations must not both be set"
+            )
+        return dict(proposal.node_views)
+
+    if proposal.node_views is not None:
+        raise MalformedProposalScope(
+            f"proposal {proposal.id} is {proposal.kind!r} but carries node_views; "
+            f"only {COMPOUND_KIND!r} may"
+        )
+    if proposal.node_id is None:
+        raise MalformedProposalScope(
+            f"proposal {proposal.id} is {proposal.kind!r} but has no node_id"
+        )
+    return {proposal.node_id: list(proposal.proposed_views)}
+
+
 __all__ = [
+    "COMPOUND_KIND",
+    "SINGLE_KIND",
     "ChangeProposal",
     "CounterfactualResult",
     "CoverageEntry",
+    "MalformedProposalScope",
+    "proposal_node_views",
     "EvidenceRef",
     "JsonPatchOperation",
     "Mode",

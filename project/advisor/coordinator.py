@@ -19,10 +19,11 @@ Three things a single-node turn never had to worry about, and this owns:
   against R2 with nothing noticing. One revision is pinned per turn, checked
   before reasoning and again before writing; the insert itself is conditional
   on it.
-* **One proposal per turn.** Proposals from one turn share a base revision,
-  so approving one advances the head and the rest fail approval's
-  base-vs-head check. Filing several would put cards on screen that are
-  already impossible to apply.
+* **One proposal per turn, covering every node it touched.** Consultations
+  stage candidate views; the turn files them together as one compound
+  proposal, approved as a unit. Filing one proposal per node instead would
+  give them a shared base revision, and approving any one of them would make
+  the rest fail approval's base-vs-head check.
 * **A budget that survives concurrency.** Whether one model response's tool
   calls are dispatched concurrently is a LazyBridge implementation detail,
   so the budget is reserved atomically rather than assuming they are not.
@@ -67,11 +68,13 @@ SYSTEM_PROMPT = (
     "counterfactual evaluation, a pending-approval state and an explicit human "
     "approval before the tree can change. Consult a node only when it "
     "materially helps answer the request: consultation capacity is shared "
-    "across the whole turn and is finite. AT MOST ONE proposal can be created "
-    "per turn, across all nodes -- proposals made in one turn share a base "
-    "revision, and approving one makes the others impossible to apply. So "
-    "choose the single most important node to propose on; if another node also "
-    "needs a change, say so in your answer and let the human ask for it next. "
+    "across the whole turn and is finite. You may change SEVERAL nodes in one "
+    "turn: each advisor's views are staged, and the turn files them as ONE "
+    "proposal covering every node it touched, which the human approves or "
+    "rejects as a single unit. Nothing is filed until the turn ends, so a "
+    "consultation reporting 'staged' has not changed anything yet. A node can "
+    "be staged only once per turn -- if you consult it again, report what it "
+    "said rather than trying to replace what is already staged. "
     "Tree BUILDING is separate and pre-onboarding: the tree-builder specialist "
     "returns a draft config in memory, which the human must review and save "
     "themselves. Never describe a draft as saved. When it returns one, put it "
@@ -316,7 +319,10 @@ class _TurnScope:
     pinned_revision_id: str
     batch_id: UUID
     budget: ConsultationBudget
-    proposed_nodes: set[str]
+    #: node -> candidate views accumulated across the turn, written as one
+    #: compound proposal at the end. Mutated under ``budget.lock``, since a
+    #: response's tool calls may be dispatched concurrently.
+    staged: dict[str, list[Any]]
     caller_id: str
     conversation_id: str
     model: str
@@ -424,63 +430,55 @@ def _build_consult_tool(
                     "proposal_id": None,
                 }
 
-            # One proposal per turn, across every node. They would all share a
-            # base revision, so approving one makes the rest impossible to
-            # apply; filing them anyway means cards on screen that can never
-            # be used. The second finding goes back to the coordinator instead.
-            with scope.budget.lock:
-                already = next(iter(scope.proposed_nodes), None)
-                if already is None:
-                    scope.proposed_nodes.add(node_id)
-            if already is not None:
-                return refuse(
-                    "refused_second_proposal_in_turn",
-                    f"a proposal was already created for node {already} in this turn, "
-                    "and two proposals sharing one base revision cannot both be "
-                    f"approved. Report this finding for {node_id} in your answer and "
-                    "let the human ask for it in a new turn.",
-                )
-
+            # Staged, not filed. The turn writes one compound proposal at the
+            # end covering every node it touched, so several nodes can be
+            # changed together and approved as a unit -- filing one per node
+            # would give them a shared base revision, and approving any one
+            # would make the rest impossible to apply.
+            #
+            # Validated here as well as at creation so a bad candidate fails
+            # its own consultation, where the coordinator can react, instead
+            # of poisoning the whole compound at the end.
             try:
-                proposal = services.create_proposal(
+                services.validate_candidate_views(
                     scope.tree_id,
                     node_id,
                     [view.model_dump() for view in result.proposed_views],
-                    caller_id=scope.caller_id,
-                    rationale=result.message,
-                    producer_kind="interactive_chat",
-                    producer_id="tree-coordinator-agent",
-                    model=scope.model,
-                    batch_id=scope.batch_id,
-                    expected_revision_id=scope.pinned_revision_id,
-                    backend=scope.backend,
                     db_path=scope.db_path,
                 )
-            except Exception:
-                # The slot was claimed for a proposal that does not exist, so
-                # release it: refusing a later retry on a node nothing was
-                # filed for would be dedup punishing a failure.
-                with scope.budget.lock:
-                    scope.proposed_nodes.discard(node_id)
-                raise
+            except ValueError as exc:
+                return refuse("refused_invalid_views", _truncate_text(exc))
 
-            _try_record_event(
+            with scope.budget.lock:
+                previous = scope.staged.get(node_id)
+                if previous is None:
+                    scope.staged[node_id] = list(result.proposed_views)
+            if previous is not None:
+                # Last-write-wins would make the turn's outcome depend on the
+                # order two concurrent consultations happened to finish in.
+                return refuse(
+                    "refused_node_already_staged",
+                    f"node {node_id} already has candidate views staged in this turn; "
+                    "say so in your answer rather than replacing them.",
+                )
+
+            _record_event(
                 scope.conversation_id,
                 {
                     "kind": "coordinator_consultation",
                     "batch_id": str(scope.batch_id),
                     "node_id": node_id,
-                    "status": "proposal_created",
-                    "proposal_id": str(proposal.id),
+                    "status": "candidate_staged",
+                    "view_count": len(result.proposed_views),
                 },
                 pinned_revision_id=scope.pinned_revision_id,
                 db_path=scope.db_path,
             )
             return {
                 "node_id": node_id,
-                "route": "propose",
+                "route": "staged",
                 "message": _truncate_text(result.message),
-                "proposal_id": str(proposal.id),
+                "note": "staged for this turn's single proposal; nothing filed yet",
             }
         except Exception as exc:  # noqa: BLE001
             # A failure inside one node must reach the parent model as a tool
@@ -635,6 +633,8 @@ def run_coordinator_turn(
 
     batch_id = uuid4()
     tree_tools: list[Any] = []
+    #: Stays None in draft-only mode, where there is no tree to propose on.
+    scope: _TurnScope | None = None
     if summary is not None:
         root_id, children_by_node = _flatten_summary(summary["root"])
         scope = _TurnScope(
@@ -642,7 +642,7 @@ def run_coordinator_turn(
             pinned_revision_id=str(summary["revision_id"]),
             batch_id=batch_id,
             budget=ConsultationBudget(max_consultations),
-            proposed_nodes=set(),
+            staged={},
             caller_id=caller_id,
             conversation_id=conversation_id,
             model=model,
@@ -707,12 +707,82 @@ def run_coordinator_turn(
     result: CoordinatorTurnResult = payload
 
     draft_config, draft_error = _validate_draft_config(result.draft_config)
+    proposal_id, proposal_error = _file_staged_proposal(
+        scope, model=model, backend=backend, db_path=db_path
+    )
     return {
         "message": result.message,
         "batch_id": str(batch_id),
         "draft_config": draft_config,
         "draft_error": draft_error,
+        "proposal_id": proposal_id,
+        "proposal_error": proposal_error,
     }
+
+
+def _file_staged_proposal(
+    scope: _TurnScope | None,
+    *,
+    model: str,
+    backend: OptimizationDataBackend | None,
+    db_path: str | os.PathLike[str] | None,
+) -> tuple[str | None, str | None]:
+    """Write the turn's staged candidates as one compound proposal.
+
+    Taken from the accumulator in deterministic Python, never from the
+    coordinator's own narrative: what gets filed must be what the node
+    advisors actually produced, not what the parent model reports they did.
+    """
+
+    if scope is None or not scope.staged:
+        return None, None
+
+    node_views = {
+        node_id: [view.model_dump() for view in views]
+        for node_id, views in sorted(scope.staged.items())
+    }
+    try:
+        proposal = services.create_proposal(
+            scope.tree_id,
+            node_views=node_views,
+            caller_id=scope.caller_id,
+            rationale=f"Coordinator turn covering {', '.join(sorted(node_views))}.",
+            producer_kind="interactive_chat",
+            producer_id="tree-coordinator-agent",
+            model=model,
+            batch_id=scope.batch_id,
+            expected_revision_id=scope.pinned_revision_id,
+            backend=backend,
+            db_path=db_path,
+        )
+    except Exception as exc:
+        _try_record_event(
+            scope.conversation_id,
+            {
+                "kind": "coordinator_consultation",
+                "batch_id": str(scope.batch_id),
+                "status": "proposal_create_failed",
+                "nodes": sorted(node_views),
+                "error": _truncate_text(exc),
+            },
+            pinned_revision_id=scope.pinned_revision_id,
+            db_path=db_path,
+        )
+        return None, _truncate_text(exc)
+
+    _try_record_event(
+        scope.conversation_id,
+        {
+            "kind": "coordinator_consultation",
+            "batch_id": str(scope.batch_id),
+            "status": "proposal_created",
+            "nodes": sorted(node_views),
+            "proposal_id": str(proposal.id),
+        },
+        pinned_revision_id=scope.pinned_revision_id,
+        db_path=db_path,
+    )
+    return str(proposal.id), None
 
 
 #: Only what another module actually calls. Everything else here is internal

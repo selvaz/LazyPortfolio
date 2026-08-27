@@ -134,8 +134,11 @@ def test_baseline_and_variant_carry_terminal_weights_and_node_audit() -> None:
     )
     assert "terminal_weights" in result.baseline
     assert "terminal_weights" in result.variant
-    assert result.baseline["node_audit"] is not None
-    assert result.variant["node_audit"] is not None
+    # Audits are keyed by node id since compound proposals: one proposal can
+    # now change several nodes, and a single unlabelled audit could not say
+    # which one it described.
+    assert result.baseline["node_audits"]["equity"] is not None
+    assert result.variant["node_audits"]["equity"] is not None
 
 
 def test_solver_versions_are_recorded() -> None:
@@ -147,7 +150,8 @@ def test_solver_versions_are_recorded() -> None:
         mode="forward_backward",
         periods_per_year=252.0,
     )
-    assert result.solver_versions.get("solver_strategy")
+    # Keyed by node, for the same reason the audits are.
+    assert result.solver_versions.get("equity.solver_strategy")
 
 
 def test_seed_is_recorded_when_given() -> None:

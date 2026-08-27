@@ -148,7 +148,11 @@ CREATE TABLE IF NOT EXISTS change_proposals (
     supersedes_proposal_id TEXT,
     tree_id TEXT NOT NULL,
     base_revision_id TEXT NOT NULL,
-    node_id TEXT NOT NULL,
+    -- Nullable since schema version 1: a compound proposal covers several
+    -- nodes and has no single one. Denormalized for display and indexing
+    -- only; the authoritative scope is in payload_json, resolved by
+    -- lazyportfolio.advisor.contracts.proposal_node_views.
+    node_id TEXT,
     kind TEXT NOT NULL,
     producer_kind TEXT NOT NULL,
     producer_id TEXT NOT NULL,
@@ -225,6 +229,87 @@ def resolve_db_path(db_path: str | os.PathLike[str] | None = None) -> Path:
     return repo_root / "reports" / "tree_studio" / "tree_studio.sqlite3"
 
 
+#: Bumped when a migration below is added. A database at this version needs
+#: no further work; one below it is brought forward on the next connect.
+_SCHEMA_VERSION = 1
+
+
+def _migration_001_nullable_proposal_node(conn: sqlite3.Connection) -> None:
+    """Make ``change_proposals.node_id`` nullable, for compound proposals.
+
+    ``CREATE TABLE IF NOT EXISTS`` cannot relax a constraint on a table that
+    already exists, and SQLite cannot drop NOT NULL in place, so this is the
+    documented rebuild: create the new shape, copy, drop, rename. Existing
+    rows are copied byte for byte -- ``payload_json`` and ``content_hash`` are
+    never rewritten, so no stored proposal's hash changes.
+
+    Three tables carry foreign keys *into* this one, which is why foreign key
+    enforcement is off for the rebuild and ``foreign_key_check`` runs before
+    the commit rather than trusting that it went well.
+    """
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(change_proposals)")}
+    if not columns:
+        return  # fresh database: the schema above already has the new shape
+    notnull = {
+        row[1]: row[3] for row in conn.execute("PRAGMA table_info(change_proposals)")
+    }
+    if not notnull.get("node_id"):
+        return  # already rebuilt, or created fresh at the current shape
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    # Without this, RENAME would rewrite references to the renamed table in
+    # other tables' definitions -- exactly what must not happen here.
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        conn.execute("BEGIN")
+        conn.execute(
+            "CREATE TABLE change_proposals_migrated ("
+            "proposal_id TEXT PRIMARY KEY, batch_id TEXT, supersedes_proposal_id TEXT, "
+            "tree_id TEXT NOT NULL, base_revision_id TEXT NOT NULL, node_id TEXT, "
+            "kind TEXT NOT NULL, producer_kind TEXT NOT NULL, producer_id TEXT NOT NULL, "
+            "payload_json TEXT NOT NULL, content_hash TEXT NOT NULL, status TEXT NOT NULL, "
+            "expires_at TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO change_proposals_migrated SELECT proposal_id, batch_id, "
+            "supersedes_proposal_id, tree_id, base_revision_id, node_id, kind, "
+            "producer_kind, producer_id, payload_json, content_hash, status, "
+            "expires_at, created_at FROM change_proposals"
+        )
+        conn.execute("DROP TABLE change_proposals")
+        conn.execute("ALTER TABLE change_proposals_migrated RENAME TO change_proposals")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_change_proposals_tree_status "
+            "ON change_proposals(tree_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_change_proposals_batch "
+            "ON change_proposals(batch_id)"
+        )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError(
+                f"migration 001 would leave dangling references: {violations[:5]}"
+            )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if version >= _SCHEMA_VERSION:
+        return
+    if version < 1:
+        _migration_001_nullable_proposal_node(conn)
+    conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+
+
 def connect(db_path: str | os.PathLike[str] | None = None) -> sqlite3.Connection:
     """Open a connection to the shared database, creating the schema if needed.
 
@@ -244,6 +329,7 @@ def connect(db_path: str | os.PathLike[str] | None = None) -> sqlite3.Connection
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(_SCHEMA)
     conn.executescript(_ADVISOR_SCHEMA)
+    _migrate(conn)
     return conn
 
 

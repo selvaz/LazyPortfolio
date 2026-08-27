@@ -19,6 +19,15 @@ Il database condiviso è un unico file SQLite, risolto da `lazyportfolio.v2.db.r
 
 Le tabelle del Node Advisor (`tree_revisions`, `tree_heads`, `agent_conversations`, `agent_messages`, `agent_jobs`, `change_proposals`, `proposal_approvals`, `proposal_confirmations`, `proposal_evidence`, `outbox_events`, `legacy_tree_names`) sono create additivamente (`CREATE TABLE IF NOT EXISTS`) da `lazyportfolio.v2.db.connect()` a ogni connessione -- niente comando di migrazione separato da eseguire.
 
+Dal 2026-08-27 esistono anche **migrazioni vere**, per i cambiamenti che
+`CREATE TABLE IF NOT EXISTS` non può fare (rilassare un vincolo su una tabella
+che esiste già). Sono numerate da `PRAGMA user_version` ed eseguite da
+`_migrate()` dentro `connect()`: un database alla versione corrente non paga
+nulla, uno indietro viene portato avanti alla prima connessione. La 001 rende
+`change_proposals.node_id` nullable per le proposte composite (§8), copiando
+le righe esistenti byte per byte -- nessun `payload_json` viene riscritto,
+quindi nessun `content_hash` cambia.
+
 ## 2. I due percorsi di un messaggio
 
 `POST /api/advisor/conversations/{id}/messages` accetta **esattamente uno** dei due corpi:
@@ -159,11 +168,22 @@ modello è narrativa e non fa fede.
   ragionare e di nuovo prima di scrivere; l'insert è condizionato su di essa
   dentro la stessa istruzione SQL. Un turno che ha ragionato su R1 non scrive
   mai contro R2.
-- **Una proposta per turno**, su tutti i nodi. Le proposte di uno stesso turno
-  condividono la revisione base: approvandone una le altre falliscono il
-  controllo base-vs-head. Crearle comunque significherebbe mostrare card già
-  inapplicabili. La seconda scoperta torna al coordinatore, che la riporta
-  nella risposta.
+- **Una proposta per turno, che copre tutti i nodi toccati.** Le consultazioni
+  mettono in staging le view candidate; il turno le deposita insieme come
+  un'unica proposta *composita* (`kind: replace_nodes_views`), approvata come
+  unità e applicata in una sola revisione. Depositarne una per nodo darebbe
+  loro la stessa revisione base, e approvarne una farebbe fallire le altre sul
+  controllo base-vs-head. Un nodo può essere messo in staging una volta sola
+  per turno: last-write-wins renderebbe l'esito dipendente dall'ordine in cui
+  due consultazioni concorrenti finiscono.
+
+  L'anteprima di una composita è **un solo solve** con tutte le view applicate
+  insieme, mai la somma di anteprime per nodo: le view non si compongono, e il
+  run di conferma (§9) confronta l'albero applicato proprio contro quel solve
+  combinato. La proposta non ha un `node_id`: lo scopo autorevole è
+  `node_views`, risolto da `contracts.proposal_node_views`, che rifiuta un
+  payload i cui campi contraddicono il proprio `kind` -- è ciò che impedisce
+  di mostrare all'umano un nodo mentre l'approvazione ne applica diversi.
 - **Budget condiviso** (`max_consultations`, default 6) riservato in modo
   atomico, valido su tutto l'albero e non per ramo.
 
