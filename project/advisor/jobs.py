@@ -25,7 +25,7 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from threading import Event
+from threading import Event, Thread
 from typing import Any
 from uuid import uuid4
 
@@ -33,6 +33,11 @@ from lazyportfolio.v2 import db as _db
 
 FIXTURE_PROPOSAL = "fixture_proposal"
 ADVISOR_TURN = "advisor_turn"
+COORDINATOR_TURN = "coordinator_turn"
+
+#: Comfortably under the 60s reaper timeout the Studio worker uses, so a
+#: legitimately slow job is never mistaken for a crashed one.
+_HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -233,13 +238,31 @@ def run_worker_once(
             db_path=db_path,
         )
         return True
+    # Beat while the handler runs, not just before it. A tree-coordinator turn
+    # walks a hierarchy of nested LLM calls and routinely outlives the reaper's
+    # timeout; with a single heartbeat, another worker would reap it as
+    # orphaned and run the same human message a second time.
+    done = Event()
+
+    def _beat() -> None:
+        while not done.wait(_HEARTBEAT_INTERVAL_SECONDS):
+            try:
+                heartbeat(job.job_id, db_path=db_path)
+            except Exception:  # noqa: BLE001 - a missed beat must not kill the job
+                pass
+
+    beater = Thread(target=_beat, daemon=True, name=f"job-heartbeat-{job.job_id[:8]}")
+    beater.start()
     try:
         handler(job)
     except Exception as exc:  # the job failed; never crash the worker loop over it
         complete_job(job.job_id, status="failed", error=str(exc), db_path=db_path)
         return True
-    complete_job(job.job_id, status="succeeded", db_path=db_path)
-    return True
+    else:
+        complete_job(job.job_id, status="succeeded", db_path=db_path)
+        return True
+    finally:
+        done.set()
 
 
 def run_worker_loop(

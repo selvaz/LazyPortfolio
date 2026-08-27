@@ -66,6 +66,13 @@ from project.tree_studio_v2.exports import build_audit_bundle, build_client_repo
 
 APP_DIR = Path(__file__).resolve().parent
 INDEX_FILE = APP_DIR / "tree_studio.html"
+#: The advisor/coordinator routes that live under /api/trees/ rather than
+#: /api/advisor/. Matched in full so a saved model named "summary" or
+#: "proposals" still reaches /api/models/{name}.
+_ADVISOR_TREE_GET = re.compile(
+    r"^/api/trees/[^/]+/(summary|proposals|nodes/[^/]+/advisor/context)$"
+)
+_ADVISOR_TREE_POST = re.compile(r"^/api/trees/[^/]+/coordinator/conversations$")
 _TICKER = re.compile(r"^[A-Za-z0-9.\-]+$")
 #: Used only for export filename stems (audit ZIP / client report) below --
 #: model persistence itself goes through lazyportfolio.v2.store, which owns
@@ -844,8 +851,11 @@ class StudioHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/advisor/jobs/") and path.endswith("/events"):
             self._advisor_job_events(path.removeprefix("/api/advisor/jobs/").removesuffix("/events"))
             return
-        if path.startswith("/api/advisor/") or path.endswith("/advisor/context"):
-            self._advisor_get(path)
+        # Matched precisely, not by suffix: a saved model may legitimately be
+        # named "summary" or "proposals", and /api/models/{name} must keep
+        # reaching it.
+        if path.startswith("/api/advisor/") or _ADVISOR_TREE_GET.match(path):
+            self._advisor_get(path, parse_qs(parsed.query))
             return
         if path == "/api/sample":
             self._json(HTTPStatus.OK, sample_config())
@@ -899,7 +909,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(payload, dict):
                 raise StudioConfigError("configuration must be an object")
-            if path.startswith("/api/advisor/"):
+            if path.startswith("/api/advisor/") or _ADVISOR_TREE_POST.match(path):
                 self._advisor_post(path, payload)
                 return
             if path == "/api/models":
@@ -1111,9 +1121,9 @@ class StudioHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------ #
     # Node Advisor (docs/node-advisor-operational-plan.md §9.1/§13 Fase 3)
     # ------------------------------------------------------------------ #
-    def _advisor_get(self, path: str) -> None:
+    def _advisor_get(self, path: str, query: dict[str, list[str]] | None = None) -> None:
         try:
-            status, response_payload = _advisor_api.handle_get(path)
+            status, response_payload = _advisor_api.handle_get(path, query)
         except _advisor_api.ApiError as exc:
             self._json(HTTPStatus(exc.status), {"ok": False, "error": exc.message})
             return
@@ -1183,6 +1193,7 @@ def _start_advisor_worker() -> Event:
     handlers = {
         _advisor_jobs.FIXTURE_PROPOSAL: _advisor_services.handle_fixture_proposal_job,
         _advisor_jobs.ADVISOR_TURN: _advisor_services.handle_advisor_turn_job,
+        _advisor_jobs.COORDINATOR_TURN: _advisor_services.handle_coordinator_turn_job,
     }
 
     def _reap_then_run() -> None:

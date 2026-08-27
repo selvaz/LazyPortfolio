@@ -179,10 +179,22 @@
     .advisor-status-pill.pending_approval { background:#fdf1da; color:var(--gold); }
     .advisor-status-pill.applied { background:#e4f3ee; color:var(--green); }
     .advisor-status-pill.rejected,.advisor-status-pill.expired { background:#f8e6e6; color:var(--red); }
+    /* Coordinator drawer: same geometry as the Advisor's, one pane further
+       left so both can be open at once -- the coordinator's narrative and the
+       node conversation it delegated to are read together. */
+    #coordinatorPane { position:fixed; top:58px; right:0; width:420px; max-width:92vw; height:calc(100vh - 58px); background:var(--panel); border-left:1px solid var(--line); box-shadow:-4px 0 14px rgba(0,0,0,.08); z-index:81; display:flex; flex-direction:column; }
+    #coordinatorPane.beside-advisor { right:380px; }
+    #coordinatorPane .coord-head { padding:10px 14px; border-bottom:1px solid var(--line); font-weight:750; font-size:13px; display:flex; justify-content:space-between; align-items:center; }
+    #coordinatorPane .coord-body { flex:1; overflow:auto; padding:12px 14px; }
+    #coordinatorPane textarea { width:100%; min-height:70px; font-family:inherit; font-size:12px; border:1px solid var(--line); border-radius:5px; padding:6px 8px; box-sizing:border-box; }
+    #coordinatorPane input[type=text] { width:100%; border:1px solid var(--line); border-radius:5px; padding:6px 8px; box-sizing:border-box; font-size:12px; margin-bottom:6px; }
+    .coord-event { font-size:11px; border-left:3px solid var(--line); padding:3px 8px; margin:4px 0; color:var(--muted); }
+    .coord-event.propose { border-left-color:var(--gold); }
+    .coord-event.refused,.coord-event.error { border-left-color:var(--red); }
   </style>
 </head>
 <body>
-  <header class="topbar"><div class="brand">LazyFin <small>Tree Studio</small></div><div class="top-actions"><select id="configSource" title="Scegli un esempio o un JSON importato"><option value="multi">Esempio multi-sleeve</option><option value="minimum">Esempio forward minimo</option></select><input id="jsonImport" type="file" accept="application/json,.json" class="hidden"><button class="button" id="loadConfigBtn" data-help="Carica l'esempio selezionato. L'opzione Importa JSON apre un file JSON ed e conservata nella lista locale del browser." title="Carica configurazione">Carica</button><button class="button" id="saveConfigBtn" data-help="Salva il modello nel browser e in reports/tree_studio/models, una cartella locale esclusa da Git." title="Salva modello">Salva modello</button><button class="button" id="exportBtn" data-help="Esporta il modello corrente, inclusi albero, benchmark e protocollo, in un file JSON portabile." title="Esporta JSON">Esporta JSON</button><button class="button" id="clearCacheBtn" data-help="Svuota solo la cache dei risultati sul server locale. Modelli salvati, configurazione e dati Market Data Hub non vengono modificati." title="Svuota cache risultati">Svuota cache</button><button class="button primary" id="verifyBtn" data-help="Controlla struttura, ticker, benchmark e compatibilita con la modalita forward senza eseguire il calcolo." title="Verifica configurazione">Verifica</button><button class="button run" id="runBtn" data-help="Con Forward attivo esegue B0, L0, ogni sleeve e i portafogli composti. Se disattivato calcola i pesi ricorsivi di tutti i nodi e del portafoglio finale." title="Esegui ottimizzazione">Ottimizza</button><button class="button run" id="backtestBtn" data-help="Con Forward attivo mostra il backtest gerarchico: benchmark, root, pesi locali, portafogli composti e traccia dei ribilanciamenti. Se Forward e disattivo esegue il backtest ricorsivo dell'albero." title="Esegui backtest">Backtest</button><button class="button run" id="pruningBtn" data-help="Esegue il pruning adattivo con la policy selezionata in Dati e backtest. Tutte le decisioni sono calcolate dal backend LazyPortfolio." title="Esegui pruning adattivo">Pruning</button><button class="button" id="advisorToggleBtn" data-help="Apre il pannello Node Advisor per il nodo selezionato: chat, fonti, proposte e audit." title="Node Advisor">Advisor</button></div></header>
+  <header class="topbar"><div class="brand">LazyFin <small>Tree Studio</small></div><div class="top-actions"><select id="configSource" title="Scegli un esempio o un JSON importato"><option value="multi">Esempio multi-sleeve</option><option value="minimum">Esempio forward minimo</option></select><input id="jsonImport" type="file" accept="application/json,.json" class="hidden"><button class="button" id="loadConfigBtn" data-help="Carica l'esempio selezionato. L'opzione Importa JSON apre un file JSON ed e conservata nella lista locale del browser." title="Carica configurazione">Carica</button><button class="button" id="saveConfigBtn" data-help="Salva il modello nel browser e in reports/tree_studio/models, una cartella locale esclusa da Git." title="Salva modello">Salva modello</button><button class="button" id="exportBtn" data-help="Esporta il modello corrente, inclusi albero, benchmark e protocollo, in un file JSON portabile." title="Esporta JSON">Esporta JSON</button><button class="button" id="clearCacheBtn" data-help="Svuota solo la cache dei risultati sul server locale. Modelli salvati, configurazione e dati Market Data Hub non vengono modificati." title="Svuota cache risultati">Svuota cache</button><button class="button primary" id="verifyBtn" data-help="Controlla struttura, ticker, benchmark e compatibilita con la modalita forward senza eseguire il calcolo." title="Verifica configurazione">Verifica</button><button class="button run" id="runBtn" data-help="Con Forward attivo esegue B0, L0, ogni sleeve e i portafogli composti. Se disattivato calcola i pesi ricorsivi di tutti i nodi e del portafoglio finale." title="Esegui ottimizzazione">Ottimizza</button><button class="button run" id="backtestBtn" data-help="Con Forward attivo mostra il backtest gerarchico: benchmark, root, pesi locali, portafogli composti e traccia dei ribilanciamenti. Se Forward e disattivo esegue il backtest ricorsivo dell'albero." title="Esegui backtest">Backtest</button><button class="button run" id="pruningBtn" data-help="Esegue il pruning adattivo con la policy selezionata in Dati e backtest. Tutte le decisioni sono calcolate dal backend LazyPortfolio." title="Esegui pruning adattivo">Pruning</button><button class="button" id="advisorToggleBtn" data-help="Apre il pannello Node Advisor per il nodo selezionato: chat, fonti, proposte e audit." title="Node Advisor">Advisor</button><button class="button" id="coordinatorToggleBtn" data-help="Apre il Coordinatore dell'albero: parla all'intero albero e delega agli advisor dei nodi, oppure fatti aiutare a costruire una bozza di albero." title="Coordinatore albero">Coordinatore</button></div></header>
   <main class="layout">
     <aside class="pane tree-pane"><div class="pane-header"><span class="pane-title">Albero</span><button class="button" id="addNodeBtn" data-help="Aggiunge un nodo figlio al nodo selezionato. Puoi ripetere l'operazione per creare tutti i livelli che vuoi." title="Aggiungi figlio">Aggiungi figlio</button></div><div class="guide"><h2>Ottimizzazione forward</h2><p>Con Forward attivo, ogni sleeve viene confrontata con il proprio proxy e i pesi vengono ricomposti a ogni livello. Disattivalo per vedere esclusivamente l'ottimizzazione ricorsiva corrente dell'albero.</p></div><div class="tree" id="tree"></div></aside>
     <section class="pane"><div class="pane-header"><div><span class="pane-title" id="editorTitle">Nodo</span><div class="editor-nav"><button class="button active" data-view="build" data-help="Modifica struttura, universo, obiettivo e vincoli del nodo selezionato.">Albero e nodo</button><button class="button" data-view="map" data-help="Mostra tutto l'albero con tutti i livelli. Clicca un nodo per modificarlo.">Vista albero</button><button class="button" data-view="test" data-help="Imposta storia dei dati, costi, frequenza di ribilanciamento e benchmark del backtest.">Dati e backtest</button></div></div><button class="button danger" id="deleteNodeBtn" data-help="Elimina il nodo selezionato. Un nodo con figli deve essere prima svuotato o riorganizzato.">Elimina nodo</button></div><div id="editorNote" class="editor-note"></div><div class="form" id="nodeForm"></div><div class="tree-map hidden" id="treeMap"></div><div class="settings hidden" id="globalForm"></div></section>
@@ -210,6 +222,23 @@
       <div class="advisor-view" data-advisor-view="fonti"><p style="font-size:12px;color:var(--muted)">Nessuna fonte: la ricerca (evidence) arriva con l'agente conversazionale (Fase 4).</p></div>
       <div class="advisor-view" data-advisor-view="proposte"><div id="advisorProposalsLog" style="font-size:12px;color:var(--muted)">Nessuna proposta ancora in questa sessione.</div></div>
       <div class="advisor-view" data-advisor-view="audit"><div id="advisorAuditLog" style="font-size:12px;color:var(--muted)">Nessun evento ancora.</div></div>
+    </div>
+  </aside>
+  <aside id="coordinatorPane" class="hidden">
+    <div class="coord-head"><span>Coordinatore albero</span><button class="button" id="coordinatorCloseBtn" title="Chiudi">Chiudi</button></div>
+    <div class="coord-body">
+      <p style="font-size:12px;color:var(--muted);margin-top:0">Parla all'albero nel suo insieme: il coordinatore decide quali nodi consultare e delega ai loro advisor, che restano gli unici a poter proporre view -- sempre con la tua approvazione. Puo anche aiutarti a costruire una bozza di albero, che resta da salvare a mano.</p>
+      <label style="font-size:11px;font-weight:650">tree_id</label>
+      <input type="text" id="coordinatorTreeId" placeholder="UUID del tree gia registrato">
+      <label style="font-size:11px;font-weight:650">messaggio</label>
+      <textarea id="coordinatorInput" placeholder="es. rivedi l'albero, il rischio inflazione sta salendo -- oppure: aiutami a costruire un albero regionale a 4 blocchi"></textarea>
+      <div style="margin-top:8px"><button class="button primary" id="coordinatorSendBtn">Invia</button></div>
+      <div id="coordinatorLog" style="margin-top:10px;font-size:12px"></div>
+      <h3 style="font-size:12px;margin:14px 0 4px">Consultazioni</h3>
+      <p style="font-size:11px;color:var(--muted);margin:0 0 6px">Cosa ha fatto davvero il turno, registrato dal codice e non dal racconto del modello.</p>
+      <div id="coordinatorEvents" style="font-size:11px;color:var(--muted)">Nessuna consultazione ancora.</div>
+      <h3 style="font-size:12px;margin:14px 0 4px">Proposte del turno</h3>
+      <div id="coordinatorProposals" style="font-size:12px;color:var(--muted)">Nessuna proposta ancora.</div>
     </div>
   </aside>
   <script>
@@ -489,6 +518,32 @@
   document.querySelectorAll('[data-view]').forEach(el=>el.onclick=()=>{applyNodeForm();applyGlobal();activeView=el.dataset.view;render();});
   refreshConfigSource();
   syncBrowserModels().then(refreshDiskModels);
+  // A coordinator-produced draft lands here, on exactly the path an imported
+  // JSON takes: rendered in the editor, saved by nobody but the user. It
+  // replaces what is on screen, so it asks first, and it keeps the previous
+  // state to roll back to -- a draft that renders badly must not leave the
+  // editor unusable.
+  document.addEventListener('tree-studio:load-config', (event) => {
+    const config = event.detail;
+    if (!config || !Array.isArray(config.nodes) || !config.root_id) { setStatus('Bozza non valida: ignorata.','warn'); return; }
+    if (!confirm('Il coordinatore propone una bozza di albero. Sostituisce quello aperto ora: le modifiche non salvate andranno perse. Procedo?')) {
+      setStatus('Bozza del coordinatore rifiutata: l albero corrente resta invariato.','warn');
+      return;
+    }
+    const previous = { state, selectedId, activeView };
+    try {
+      state = config;
+      selectedId = config.root_id;
+      activeView = 'build';
+      render();
+      hydrateInstrumentLabels();
+      setStatus('Bozza del coordinatore caricata. Verifica e salva se ti convince.','warn');
+    } catch (error) {
+      state = previous.state; selectedId = previous.selectedId; activeView = previous.activeView;
+      render();
+      setStatus('Bozza non caricabile (' + error.message + '): ripristinato l albero precedente.','warn');
+    }
+  });
   fetch('/api/sample').then(r=>r.json()).then(data=>{state=data;selectedId=data.root_id;render();hydrateInstrumentLabels();});
 
   // Node Advisor side panel -- isolated from the tree editor's script above
@@ -652,6 +707,191 @@
         logLine('advisorChatLog', 'Job in coda: ' + response.job_id.slice(0, 8));
         pollJob(response.job_id);
       } catch (error) { logLine('advisorChatLog', 'Errore: ' + error.message); }
+    };
+  })();
+
+  // Tree Coordinator panel -- tree-scoped, so no node_id anywhere: which
+  // nodes get consulted is the coordinator's decision, delegated down the
+  // advisor hierarchy that mirrors the allocation tree. Its own IIFE for the
+  // same reason the Advisor's is one: the tree editor above must keep working
+  // untouched if anything here throws.
+  (function () {
+    const $c = (id) => document.getElementById(id);
+    let conversationId = null, conversationTreeId = null, pollTimer = null;
+
+    async function jsonFetch(path, body) {
+      const response = await fetch(path, body === undefined ? undefined : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + response.status));
+      return data;
+    }
+
+    function log(text) {
+      const line = document.createElement('div');
+      line.style.marginBottom = '6px';
+      line.textContent = text;
+      $c('coordinatorLog').prepend(line);
+    }
+
+    // The events and the proposals are the audit trail: they come from what
+    // the server recorded, never from what the coordinator says it did.
+    async function renderTurn(treeId, batchId, turnConversationId) {
+      const messages = (await jsonFetch('/api/advisor/conversations/' + turnConversationId + '/messages')).messages;
+      const events = messages
+        .map((m) => m.content)
+        .filter((c) => c && c.kind === 'coordinator_consultation' && c.batch_id === batchId);
+      const eventsBox = $c('coordinatorEvents');
+      eventsBox.innerHTML = events.length ? '' : 'Nessuna consultazione in questo turno.';
+      events.forEach((event) => {
+        const row = document.createElement('div');
+        row.className = 'coord-event ' + (event.route === 'propose' || event.status === 'proposal_created' ? 'propose' : event.status);
+        row.textContent = event.node_id + ' -- ' + event.status + (event.route ? ' (' + event.route + ')' : '') + (event.error ? ': ' + event.error : '');
+        eventsBox.appendChild(row);
+      });
+
+      const proposals = (await jsonFetch('/api/trees/' + encodeURIComponent(treeId) + '/proposals?batch_id=' + encodeURIComponent(batchId))).proposals;
+      const box = $c('coordinatorProposals');
+      box.innerHTML = proposals.length ? '' : 'Nessuna proposta creata in questo turno.';
+      proposals.forEach(({ proposal, status }) => box.appendChild(proposalCard(proposal, status)));
+    }
+
+    function proposalCard(proposal, status) {
+      const card = document.createElement('div');
+      card.className = 'advisor-card';
+      const title = document.createElement('div');
+      title.className = 'advisor-card-title';
+      title.textContent = proposal.node_id + ' -- ' + proposal.id.slice(0, 8);
+      card.appendChild(title);
+      const pill = document.createElement('span');
+      pill.className = 'advisor-status-pill ' + status;
+      pill.textContent = status;
+      card.appendChild(pill);
+      const rationale = document.createElement('div');
+      rationale.style.cssText = 'margin:6px 0;font-size:11px;color:var(--muted)';
+      rationale.textContent = proposal.rationale || '';
+      card.appendChild(rationale);
+      if (status === 'pending_approval') {
+        const approve = document.createElement('button');
+        approve.className = 'button primary';
+        approve.textContent = 'Approva e applica';
+        approve.onclick = async () => {
+          try {
+            const result = await jsonFetch('/api/advisor/proposals/' + proposal.id + '/approve', {
+              proposal_hash: proposal.content_hash,
+              idempotency_key: 'coord-' + Date.now(),
+              approved_by: 'local-user',
+            });
+            log('Approvata ' + proposal.node_id + ': revisione ' + result.new_revision_id.slice(0, 8));
+            card.remove();
+          } catch (error) { log('Errore approvazione ' + proposal.node_id + ': ' + error.message); }
+        };
+        const reject = document.createElement('button');
+        reject.className = 'button danger';
+        reject.style.marginLeft = '6px';
+        reject.textContent = 'Rifiuta';
+        reject.onclick = async () => {
+          try {
+            await jsonFetch('/api/advisor/proposals/' + proposal.id + '/reject', { rejected_by: 'local-user' });
+            log('Rifiutata ' + proposal.node_id);
+            card.remove();
+          } catch (error) { log('Errore rifiuto: ' + error.message); }
+        };
+        const actions = document.createElement('div');
+        actions.style.marginTop = '8px';
+        actions.appendChild(approve);
+        actions.appendChild(reject);
+        card.appendChild(actions);
+      }
+      return card;
+    }
+
+    // Awaited recursion rather than setInterval: a 700ms interval firing an
+    // async callback overlaps its own requests and can process one completed
+    // turn twice. The conversation id is captured per job, so switching trees
+    // mid-flight cannot make this read the wrong conversation.
+    async function pollJob(jobId, treeId, jobConversationId) {
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      const tick = async () => {
+        try {
+          const data = await jsonFetch('/api/advisor/jobs/' + jobId);
+          if (data.job.status !== 'succeeded' && data.job.status !== 'failed') {
+            pollTimer = setTimeout(tick, 700);
+            return;
+          }
+          if (data.job.status === 'failed') { log('Job fallito: ' + (data.job.error || 'errore sconosciuto')); releaseSend(); return; }
+          const messages = (await jsonFetch('/api/advisor/conversations/' + jobConversationId + '/messages')).messages;
+          const turn = messages.map((m) => m.content).reverse().find((c) => c && c.kind === 'coordinator_turn_result');
+          if (!turn) { log('Turno concluso senza risposta.'); releaseSend(); return; }
+          log('Coordinatore: ' + turn.message);
+          if (turn.draft_error) { log('Bozza scartata dal server: ' + turn.draft_error); }
+          if (turn.draft_config) {
+            // Exactly the "Importa JSON" path: a draft the human still has to
+            // check and save. Nothing was persisted on their behalf.
+            applyDraftConfig(turn.draft_config);
+          }
+          await renderTurn(treeId, turn.batch_id, jobConversationId);
+          releaseSend();
+        } catch (error) { log('Errore: ' + error.message); releaseSend(); }
+      };
+      pollTimer = setTimeout(tick, 700);
+    }
+
+    function releaseSend() {
+      const btn = $c('coordinatorSendBtn');
+      btn.disabled = false;
+      btn.textContent = 'Invia';
+    }
+
+    function applyDraftConfig(config) {
+      const event = new CustomEvent('tree-studio:load-config', { detail: config });
+      document.dispatchEvent(event);
+    }
+
+    // Both drawers can be open at once, so the coordinator's offset is
+    // recomputed whenever either one is toggled -- not only when this button
+    // is the one clicked, or the two overlap.
+    function placeCoordinator() {
+      $c('coordinatorPane').classList.toggle('beside-advisor', !$c('advisorPane').classList.contains('hidden'));
+    }
+    $c('coordinatorToggleBtn').onclick = () => {
+      $c('coordinatorPane').classList.toggle('hidden');
+      placeCoordinator();
+    };
+    $c('advisorToggleBtn').addEventListener('click', placeCoordinator);
+    $c('coordinatorCloseBtn').onclick = () => $c('coordinatorPane').classList.add('hidden');
+
+    $c('coordinatorSendBtn').onclick = async () => {
+      const btn = $c('coordinatorSendBtn');
+      const treeId = $c('coordinatorTreeId').value.trim();
+      const text = $c('coordinatorInput').value.trim();
+      if (!treeId) { log('tree_id e obbligatorio.'); return; }
+      if (!text) { log('Scrivi un messaggio.'); return; }
+      // One turn at a time: a second send while the first is still running
+      // would abandon its polling while its job keeps creating proposals.
+      btn.disabled = true;
+      btn.textContent = 'In corso...';
+      try {
+        if (!conversationId || conversationTreeId !== treeId) {
+          const conversation = await jsonFetch('/api/trees/' + encodeURIComponent(treeId) + '/coordinator/conversations', {});
+          conversationId = conversation.conversation_id;
+          conversationTreeId = treeId;
+        }
+        log('Tu: ' + text);
+        $c('coordinatorInput').value = '';
+        const turnConversationId = conversationId;
+        const response = await jsonFetch('/api/advisor/coordinator/conversations/' + turnConversationId + '/messages', { text });
+        log('Job in coda: ' + response.job_id.slice(0, 8));
+        // Re-enabled by pollJob when the turn actually ends, not here: the
+        // job is still running after this call returns.
+        pollJob(response.job_id, treeId, turnConversationId);
+      } catch (error) {
+        log('Errore: ' + error.message);
+        releaseSend();
+      }
     };
   })();
   </script>

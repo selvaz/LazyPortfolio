@@ -56,6 +56,58 @@ def _find_parent(model: V2Model, node_id: str) -> V2Node | None:
     return None
 
 
+class TreeTooLargeError(ValueError):
+    """The tree exceeds the node-count or depth cap :func:`build_tree_summary` enforces."""
+
+
+#: Caps for :func:`build_tree_summary`. A coordinator builds one delegation
+#: tool per node and may consult down every branch, so an unbounded tree is a
+#: cost and recursion-depth hazard, not just a large payload. The largest real
+#: tree in this workspace has 14 nodes at depth 3.
+MAX_SUMMARY_NODES = 200
+MAX_SUMMARY_DEPTH = 12
+
+
+def build_tree_summary(
+    model: V2Model,
+    *,
+    max_nodes: int = MAX_SUMMARY_NODES,
+    max_depth: int = MAX_SUMMARY_DEPTH,
+) -> dict[str, Any]:
+    """A lightweight, whole-tree structural summary for a tree-wide caller.
+
+    Deliberately *not* a per-node :class:`NodeContext`: no
+    ``allowed_view_instruments``, no snapshot, no current views. A caller
+    that needs those for one node calls :func:`resolve_node_context`. This
+    exists so a tree-wide caller can see the shape once, cheaply, from a
+    single already-parsed ``V2Model`` -- ``resolve_node_context`` reparses
+    the whole config per call, so N of them is N parses of the same dict.
+
+    Raises :class:`TreeTooLargeError` past either cap. ``V2Model.from_config``
+    already rejects a cyclic tree, so this guards size, not structure.
+    """
+
+    def visit(node: V2Node, depth: int, seen: set[str], count: list[int]) -> dict[str, Any]:
+        if depth > max_depth:
+            raise TreeTooLargeError(f"tree deeper than {max_depth} levels at node {node.id!r}")
+        count[0] += 1
+        if count[0] > max_nodes:
+            raise TreeTooLargeError(f"tree has more than {max_nodes} nodes")
+        if node.id in seen:
+            raise TreeTooLargeError(f"node {node.id!r} reached twice; tree is not a tree")
+        seen.add(node.id)
+        return {
+            "node_id": node.id,
+            "name": node.name,
+            "objective": node.objective,
+            "proxy": node.proxy,
+            "direct_instruments": list(node.instruments),
+            "children": [visit(child, depth + 1, seen, count) for child in node.children],
+        }
+
+    return {"root": visit(model.root, 0, set(), [0])}
+
+
 def resolve_node_context(
     config: dict[str, Any],
     node_id: str,
@@ -299,8 +351,12 @@ def apply_views_to_config(
 
 
 __all__ = [
+    "MAX_SUMMARY_DEPTH",
+    "MAX_SUMMARY_NODES",
     "NodeNotFoundError",
+    "TreeTooLargeError",
     "apply_views_to_config",
+    "build_tree_summary",
     "find_node",
     "resolve_node_context",
     "validate_view_set",

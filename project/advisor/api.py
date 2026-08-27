@@ -31,6 +31,18 @@ _JOB = re.compile(r"^/api/advisor/jobs/(?P<job_id>[^/]+)$")
 _PROPOSAL = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)$")
 _PROPOSAL_APPROVE = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)/approve$")
 _PROPOSAL_REJECT = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)/reject$")
+_TREE_SUMMARY = re.compile(r"^/api/trees/(?P<tree_id>[^/]+)/summary$")
+_TREE_PROPOSALS = re.compile(r"^/api/trees/(?P<tree_id>[^/]+)/proposals$")
+#: The coordinator's conversation routes are separate from the per-node ones
+#: on purpose: the node routes require a ``node_id`` on every message and
+#: enforce a views-XOR-text body, neither of which applies to a tree-scoped
+#: turn where choosing the nodes is the model's job.
+_COORDINATOR_CONVERSATIONS = re.compile(
+    r"^/api/trees/(?P<tree_id>[^/]+)/coordinator/conversations$"
+)
+_COORDINATOR_MESSAGES = re.compile(
+    r"^/api/advisor/coordinator/conversations/(?P<conversation_id>[^/]+)/messages$"
+)
 
 
 class ApiError(Exception):
@@ -43,8 +55,43 @@ class ApiError(Exception):
 
 
 def handle_get(
-    path: str, *, db_path: str | None = None
+    path: str,
+    query: dict[str, list[str]] | None = None,
+    *,
+    db_path: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
+    query = query or {}
+
+    match = _TREE_SUMMARY.match(path)
+    if match:
+        try:
+            summary = services.get_tree_summary(match["tree_id"], db_path=db_path)
+        except services.TreeNotFound as exc:
+            raise ApiError(404, f"tree not found: {exc}") from exc
+        return 200, {"ok": True, "summary": summary}
+
+    match = _TREE_PROPOSALS.match(path)
+    if match:
+        raw_batch = (query.get("batch_id") or [None])[0]
+        if raw_batch is not None:
+            try:
+                UUID(raw_batch)
+            except ValueError as exc:
+                raise ApiError(400, "batch_id must be a UUID") from exc
+        try:
+            records = services.list_proposals(
+                match["tree_id"], batch_id=raw_batch, db_path=db_path
+            )
+        except ValueError as exc:
+            raise ApiError(400, f"tree_id must be a UUID: {exc}") from exc
+        return 200, {
+            "ok": True,
+            "proposals": [
+                {"status": r.status, "proposal": r.proposal.model_dump(mode="json")}
+                for r in records
+            ],
+        }
+
     match = _NODE_CONTEXT.match(path)
     if match:
         try:
@@ -102,6 +149,44 @@ def handle_get(
 def handle_post(
     path: str, body: dict[str, Any], *, db_path: str | None = None
 ) -> tuple[int, dict[str, Any]]:
+    match = _COORDINATOR_CONVERSATIONS.match(path)
+    if match:
+        caller_id = str(body.get("caller_id") or "local-user")
+        conversation = services.create_conversation(
+            match["tree_id"],
+            services.COORDINATOR_SCOPE,
+            caller_id=caller_id,
+            db_path=db_path,
+        )
+        return 201, {
+            "ok": True,
+            "conversation_id": conversation.conversation_id,
+            "tree_id": conversation.tree_id,
+        }
+
+    match = _COORDINATOR_MESSAGES.match(path)
+    if match:
+        text = body.get("text")
+        if not isinstance(text, str) or not text:
+            raise ApiError(400, "'text' is required")
+        # A node conversation posted to this route would run a whole tree-wide
+        # turn under a conversation scoped to one node, so the scope is checked
+        # here rather than assumed from the URL the caller chose.
+        conversation = services.get_conversation(match["conversation_id"], db_path=db_path)
+        if conversation is None:
+            raise ApiError(404, "conversation not found")
+        if conversation.node_id != services.COORDINATOR_SCOPE:
+            raise ApiError(400, "this conversation is scoped to a node, not to the tree")
+        caller_id = str(body.get("caller_id") or "local-user")
+        message, job_id = services.post_message_and_enqueue(
+            match["conversation_id"],
+            {"text": text},
+            caller_id=caller_id,
+            job_kind=jobs.COORDINATOR_TURN,
+            db_path=db_path,
+        )
+        return 202, {"ok": True, "message_id": message.message_id, "job_id": job_id}
+
     if _CONVERSATIONS.match(path):
         tree_id = _require_str(body, "tree_id")
         node_id = _require_str(body, "node_id")

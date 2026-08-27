@@ -169,6 +169,60 @@ def _prepare_view_proposal_tools(
     return [*provider.as_tools(), *_research_tools()]
 
 
+def run_node_turn(
+    node_id: str,
+    message: str,
+    *,
+    context: Any,
+    tools: list[Any],
+    model: str = "deepseek-v4-flash",
+    agent_name: str = "node-advisor",
+) -> AdvisorTurnResult:
+    """One node-scoped LLM call. No persistence, no proposal, no side effects.
+
+    The reasoning kernel shared by :func:`run_advisor_turn` (which persists
+    the result as a proposal) and the tree coordinator (which persists it
+    itself, against a pinned revision and with its own per-turn dedup).
+    Splitting it out is what lets the coordinator reuse the *reasoning*
+    without inheriting ``run_advisor_turn``'s hardcoded
+    ``producer_kind``/``producer_id``, immediate persistence, and lack of
+    batch identity -- bolting parameters onto the persisting function
+    instead would have meant threading provenance, batch id and revision
+    pinning through a function whose contract is "answer one human".
+
+    ``tools`` is supplied by the caller rather than built here: the
+    coordinator passes each node's *children's* delegation tools alongside
+    the standard read-only surface, which is how the agent hierarchy comes
+    to mirror the allocation tree's own shape.
+
+    ``agent_name`` defaults to the fixed name this agent has always had, so
+    the interactive path's telemetry identity is unchanged. Node ids are
+    free-form user input and never go into it unsanitized -- the coordinator
+    passes an already-safe name when it wants per-node identity.
+    """
+
+    from lazybridge import Agent, LLMEngine
+
+    agent = Agent(
+        engine=LLMEngine(model, system=SYSTEM_PROMPT, max_turns=8),
+        tools=tools,
+        output=AdvisorTurnResult,
+        name=agent_name,
+        session=_advisor_session(),
+    )
+    prompt = (
+        f"NodeContext (authoritative, current state):\n{context.model_dump_json()}\n\n"
+        f"User message: {message}"
+    )
+    envelope = agent(prompt)
+    if envelope.error is not None:
+        raise RuntimeError(f"Node Advisor LLM call failed: {envelope.error}")
+    payload = envelope.payload
+    assert payload is not None, "envelope.error is None, so payload must be set"
+    result: AdvisorTurnResult = payload
+    return result
+
+
 def run_advisor_turn(
     tree_id: str,
     node_id: str,
@@ -191,28 +245,14 @@ def run_advisor_turn(
     a proposal (§13 Fase 4 exit criterion).
     """
 
-    from lazybridge import Agent, LLMEngine
-
     context = services.get_node_context(tree_id, node_id, db_path=db_path)
-    context_json = context.model_dump_json()
-
-    agent = Agent(
-        engine=LLMEngine(model, system=SYSTEM_PROMPT, max_turns=8),
+    result = run_node_turn(
+        node_id,
+        message,
+        context=context,
         tools=_prepare_view_proposal_tools(backend=backend, store_path=db_path),
-        output=AdvisorTurnResult,
-        name="node-advisor",
-        session=_advisor_session(),
+        model=model,
     )
-    prompt = (
-        f"NodeContext (authoritative, current state):\n{context_json}\n\n"
-        f"User message: {message}"
-    )
-    envelope = agent(prompt)
-    if envelope.error is not None:
-        raise RuntimeError(f"Node Advisor LLM call failed: {envelope.error}")
-    payload = envelope.payload
-    assert payload is not None, "envelope.error is None, so payload must be set"
-    result: AdvisorTurnResult = payload
 
     if result.route == "explain" or not result.proposed_views:
         return {"route": "explain", "message": result.message, "proposal": None}
@@ -236,4 +276,10 @@ def run_advisor_turn(
     }
 
 
-__all__ = ["AdvisorTurnResult", "CandidateView", "SYSTEM_PROMPT", "run_advisor_turn"]
+__all__ = [
+    "AdvisorTurnResult",
+    "CandidateView",
+    "SYSTEM_PROMPT",
+    "run_advisor_turn",
+    "run_node_turn",
+]

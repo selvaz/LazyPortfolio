@@ -38,6 +38,7 @@ from lazyportfolio.advisor.contracts import (
 )
 from lazyportfolio.advisor.patch import views_patch_path
 from lazyportfolio.v2.mode import mode_from_config
+from lazyportfolio.v2.model import V2Model
 from project.advisor import jobs
 
 if TYPE_CHECKING:
@@ -50,12 +51,23 @@ if TYPE_CHECKING:
 _DEFAULT_PROPOSAL_TTL = timedelta(hours=24)
 
 
+#: ``node_id`` for a coordinator conversation, which is scoped to a tree
+#: rather than a node. Safe as a sentinel because ``Conversation.node_id`` is
+#: a plain string never validated against the tree, and the advisor job
+#: handler reads the *message's* node_id, never the conversation's.
+COORDINATOR_SCOPE = "__coordinator__"
+
+
 class TreeNotFound(ValueError):
     """``tree_id`` has no revisions (see ``lazyportfolio.advisor.repository``)."""
 
 
 class ProposalNotFound(ValueError):
     pass
+
+
+class StaleBaseRevision(ValueError):
+    """The tree moved away from the revision the caller pinned."""
 
 
 # --------------------------------------------------------------------- #
@@ -77,6 +89,44 @@ def get_node_context(
     )
 
 
+def get_head_revision_id(
+    tree_id: str, *, db_path: str | os.PathLike[str] | None = None
+) -> str:
+    """The tree's current head revision id.
+
+    Exists so a long, multi-step caller (the tree coordinator) can pin the
+    revision it reasoned against and re-check it right before persisting.
+    ``get_node_context`` and ``create_proposal`` each read the head
+    independently, so without this a tree that moved mid-turn would be
+    reasoned about at R1 and written against R2 with nothing noticing.
+    """
+
+    head = tree_repository.get_head(tree_id, db_path=db_path)
+    if head is None:
+        raise TreeNotFound(tree_id)
+    return str(head.revision_id)
+
+
+def get_tree_summary(
+    tree_id: str, *, db_path: str | os.PathLike[str] | None = None
+) -> dict[str, Any]:
+    """The whole tree's structure, from a single config parse.
+
+    ``get_node_context`` rebuilds ``V2Model.from_config`` on every call, so
+    "resolve every node" costs N parses of the same dict. A tree-wide caller
+    wants the shape once; this gives it that for one parse, and deliberately
+    returns far less per node than a :class:`NodeContext` (see
+    ``node_universe.build_tree_summary``).
+    """
+
+    head = tree_repository.get_head(tree_id, db_path=db_path)
+    if head is None:
+        raise TreeNotFound(tree_id)
+    model = V2Model.from_config(head.config)
+    summary = node_universe.build_tree_summary(model)
+    return {"tree_id": str(head.tree_id), "revision_id": str(head.revision_id), **summary}
+
+
 # --------------------------------------------------------------------- #
 # Conversations / messages
 # --------------------------------------------------------------------- #
@@ -86,6 +136,12 @@ def create_conversation(
     return conversations.create_conversation(
         tree_id, node_id, user_id=caller_id, db_path=db_path
     )
+
+
+def get_conversation(
+    conversation_id: str, *, db_path: str | os.PathLike[str] | None = None
+) -> conversations.Conversation | None:
+    return conversations.get_conversation(conversation_id, db_path=db_path)
 
 
 def list_messages(
@@ -136,6 +192,7 @@ def create_proposal(
     producer_id: str = "fixture",
     model: str = "none (Fase 3, no LLM)",
     batch_id: UUID | None = None,
+    expected_revision_id: str | None = None,
     backend: OptimizationDataBackend | None = None,
     db_path: str | os.PathLike[str] | None = None,
 ) -> ChangeProposal:
@@ -154,11 +211,26 @@ def create_proposal(
     ``batch_id`` is ``None`` for the Node Advisor's own conversational flow
     (the default) and set by a batch producer to group one run's proposals
     (§3.4 point 2).
+
+    ``expected_revision_id`` pins the revision the caller reasoned against.
+    A caller that spent minutes thinking (the tree coordinator walks a whole
+    hierarchy of nested LLM calls) would otherwise validate and attach its
+    proposal to whichever head exists *now*, not the one it saw. Checked both
+    before the work and again after the slow snapshot/counterfactual step,
+    which is itself long enough for the head to move. This narrows the window
+    to the gap between the second check and the insert; closing it entirely
+    needs the insert to be conditional on the head inside one transaction,
+    which is a change to the write path rather than to this caller-supplied
+    guard.
     """
 
     head = tree_repository.get_head(tree_id, db_path=db_path)
     if head is None:
         raise TreeNotFound(tree_id)
+    if expected_revision_id is not None and str(head.revision_id) != expected_revision_id:
+        raise StaleBaseRevision(
+            f"tree {tree_id} moved from {expected_revision_id} to {head.revision_id}"
+        )
     mode = mode_from_config(head.config)
     proposed_views = [ProposedView(**view) for view in views]
 
@@ -171,6 +243,15 @@ def create_proposal(
     counterfactual = counterfactual_service.evaluate_view_counterfactual(
         head.config, node_id, proposed_views, dataset, mode=mode, periods_per_year=252.0
     )
+
+    if expected_revision_id is not None:
+        current = tree_repository.get_head(tree_id, db_path=db_path)
+        if current is None or str(current.revision_id) != expected_revision_id:
+            raise StaleBaseRevision(
+                f"tree {tree_id} moved to "
+                f"{current.revision_id if current else 'nothing'} while this proposal "
+                "was being evaluated"
+            )
 
     now = datetime.now(UTC)
     patch = [
@@ -308,6 +389,60 @@ def handle_advisor_turn_job(
     )
 
 
+def handle_coordinator_turn_job(
+    job: JobRecord,
+    *,
+    backend: OptimizationDataBackend | None = None,
+    db_path: str | os.PathLike[str] | None = None,
+) -> None:
+    """Run one tree-coordinator turn on the worker thread.
+
+    Mirrors :func:`handle_advisor_turn_job`, minus the ``node_id``: a
+    coordinator conversation is scoped to the tree, and which nodes get
+    consulted is the model's decision, not the request's.
+
+    Imports :mod:`project.advisor.coordinator` lazily for the same reason
+    the advisor handler does -- that module imports this one.
+    """
+
+    from project.advisor import coordinator as tree_coordinator
+
+    conversation = conversations.get_conversation(job.conversation_id, db_path=db_path)
+    if conversation is None:
+        raise ValueError(f"conversation {job.conversation_id!r} not found")
+    message = next(
+        (
+            m
+            for m in conversations.list_messages(job.conversation_id, db_path=db_path)
+            if m.message_id == job.request_message_id
+        ),
+        None,
+    )
+    if message is None:
+        raise ValueError(f"message {job.request_message_id!r} not found")
+
+    result = tree_coordinator.run_coordinator_turn(
+        conversation.tree_id,
+        str(message.content["text"]),
+        caller_id=conversation.user_id,
+        conversation_id=job.conversation_id,
+        backend=backend,
+        db_path=db_path,
+    )
+    conversations.add_message(
+        job.conversation_id,
+        "assistant",
+        {
+            "kind": "coordinator_turn_result",
+            "message": result["message"],
+            "batch_id": result["batch_id"],
+            "draft_config": result["draft_config"],
+            "draft_error": result["draft_error"],
+        },
+        db_path=db_path,
+    )
+
+
 # --------------------------------------------------------------------- #
 # Approval / rejection
 # --------------------------------------------------------------------- #
@@ -318,6 +453,26 @@ def get_proposal(
     if record is None:
         raise ProposalNotFound(str(proposal_id))
     return record
+
+
+def list_proposals(
+    tree_id: str,
+    *,
+    batch_id: UUID | str | None = None,
+    db_path: str | os.PathLike[str] | None = None,
+) -> list[proposals.ProposalRecord]:
+    """Proposals for one tree, newest first, optionally one batch of them.
+
+    Always scoped by ``tree_id`` even when a ``batch_id`` is given: a batch
+    id alone is an unowned identifier, and querying by it in isolation would
+    let a caller who guessed one read across trees.
+    """
+
+    records = proposals.list_by_tree(UUID(tree_id), db_path=db_path)
+    if batch_id is None:
+        return records
+    wanted = UUID(str(batch_id))
+    return [r for r in records if r.proposal.batch_id == wanted]
 
 
 def approve_proposal(
@@ -363,16 +518,23 @@ def reject_proposal(
 
 
 __all__ = [
+    "COORDINATOR_SCOPE",
     "ProposalNotFound",
+    "StaleBaseRevision",
     "TreeNotFound",
     "approve_proposal",
     "create_conversation",
     "create_proposal",
+    "get_conversation",
+    "get_head_revision_id",
     "get_node_context",
     "get_proposal",
+    "get_tree_summary",
     "handle_advisor_turn_job",
+    "handle_coordinator_turn_job",
     "handle_fixture_proposal_job",
     "list_messages",
+    "list_proposals",
     "post_message_and_enqueue",
     "reject_proposal",
 ]
