@@ -170,7 +170,6 @@ def _prepare_view_proposal_tools(
 
 
 def run_node_turn(
-    node_id: str,
     message: str,
     *,
     context: Any,
@@ -195,8 +194,10 @@ def run_node_turn(
     the standard read-only surface, which is how the agent hierarchy comes
     to mirror the allocation tree's own shape.
 
+    There is no ``node_id`` parameter: ``context`` already carries the node's
+    identity authoritatively, and a second copy could disagree with it.
     ``agent_name`` defaults to the fixed name this agent has always had, so
-    the interactive path's telemetry identity is unchanged. Node ids are
+    the interactive path's telemetry identity is unchanged; node ids are
     free-form user input and never go into it unsanitized -- the coordinator
     passes an already-safe name when it wants per-node identity.
     """
@@ -247,7 +248,6 @@ def run_advisor_turn(
 
     context = services.get_node_context(tree_id, node_id, db_path=db_path)
     result = run_node_turn(
-        node_id,
         message,
         context=context,
         tools=_prepare_view_proposal_tools(backend=backend, store_path=db_path),

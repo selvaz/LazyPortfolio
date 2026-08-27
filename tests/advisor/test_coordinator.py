@@ -190,8 +190,8 @@ def test_a_node_is_given_its_children_and_no_siblings(tree, conversation) -> Non
 
     handed: dict[str, list[str]] = {}
 
-    def _capture(node_id, instruction, *, context, tools, model, agent_name):
-        handed[node_id] = [t.name for t in tools]
+    def _capture(instruction, *, context, tools, model, agent_name):
+        handed[context.node_id] = [t.name for t in tools]
         return _explains()
 
     scope = _scope(tree, conversation, run_turn=_capture)
@@ -219,19 +219,14 @@ def test_a_budget_of_one_admits_exactly_one_of_eight_concurrent_reservations() -
 
     budget = coordinator.ConsultationBudget(1)
     barrier = threading.Barrier(8)
-    outcomes: list[str] = []
+    outcomes: list[int | None] = []
     lock = threading.Lock()
 
     def attempt() -> None:
         barrier.wait()
-        try:
-            budget.reserve()
-        except coordinator.ConsultationBudgetExceeded:
-            result = "denied"
-        else:
-            result = "granted"
+        reserved = budget.reserve()
         with lock:
-            outcomes.append(result)
+            outcomes.append(reserved)
 
     threads = [threading.Thread(target=attempt) for _ in range(8)]
     for thread in threads:
@@ -239,8 +234,8 @@ def test_a_budget_of_one_admits_exactly_one_of_eight_concurrent_reservations() -
     for thread in threads:
         thread.join()
 
-    assert outcomes.count("granted") == 1
-    assert outcomes.count("denied") == 7
+    assert [o for o in outcomes if o is not None] == [0]
+    assert outcomes.count(None) == 7
     assert budget.remaining == 0
 
 
@@ -338,6 +333,33 @@ def test_only_one_proposal_is_created_per_turn_even_across_nodes(
     assert other_node["route"] == "refused"
     assert "already created for node equity" in other_node["message"]
     assert len(services.list_proposals(revision.tree_id, db_path=store_path)) == 1
+
+
+def test_a_proposal_is_written_in_one_commit_at_its_final_status(tree, frame) -> None:
+    """Written as "drafting" and transitioned afterwards, a failed transition
+    left a proposal that existed while its caller believed nothing had been
+    written -- and the caller then retries. One commit removes the window."""
+
+    revision, store_path = tree
+    services.create_proposal(
+        revision.tree_id,
+        "equity",
+        [
+            {
+                "instruments": {"ticker:SPY": 1.0, "ticker:TLT": -1.0},
+                "expected_return": 0.03,
+                "confidence": 0.6,
+                "source": "test",
+                "rationale": "test",
+            }
+        ],
+        caller_id="test",
+        backend=_FakeBackend(frame),
+        db_path=store_path,
+    )
+
+    (record,) = services.list_proposals(revision.tree_id, db_path=store_path)
+    assert record.status == "pending_approval", "a proposal was left mid-write"
 
 
 def test_a_failed_persist_releases_the_node_for_a_retry(tree, conversation, frame) -> None:

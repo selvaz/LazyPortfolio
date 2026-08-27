@@ -87,7 +87,7 @@ _TREE_BUILDER_SYSTEM_PROMPT = (
     "invalid one is discarded, so follow this shape exactly:\n"
     "{\n"
     '  "root_id": "root",\n'
-    '  "currency": "USD",            // USD, EUR, GBP or JPY\n'
+    '  "currency": "USD",\n'
     '  "nodes": [\n'
     '    {"id": "root", "name": "Root", "instruments": [],\n'
     '     "children": ["equity", "bond"],\n'
@@ -102,7 +102,8 @@ _TREE_BUILDER_SYSTEM_PROMPT = (
     '  "backtest": {"benchmark": {"name": "B0",\n'
     '    "weights": {"ticker:SPY": 0.6, "ticker:AGG": 0.4}}}\n'
     "}\n"
-    "Rules the validator enforces: objective must be exactly one of min_risk, "
+    "Rules the validator enforces: currency is USD, EUR, GBP or JPY. "
+    "objective must be exactly one of min_risk, "
     "max_ratio, max_return, max_utility, hrp -- never prose. Every non-root "
     "node needs a proxy, and sibling nodes must have DIFFERENT proxies. "
     "Instruments are 'ticker:SYMBOL'. The benchmark weights cover the terminal "
@@ -142,10 +143,6 @@ class CoordinatorTurnResult(BaseModel):
     draft_config: dict[str, Any] | None = None
 
 
-class ConsultationBudgetExceeded(RuntimeError):
-    """No consultation reservation remains in this coordinator turn."""
-
-
 @dataclass
 class ConsultationBudget:
     """One turn's consultation budget, shared by reference across the recursion.
@@ -168,12 +165,16 @@ class ConsultationBudget:
         if self.remaining < 0:
             raise ValueError("consultation budget cannot be negative")
 
-    def reserve(self) -> int:
+    def reserve(self) -> int | None:
+        """The count left after reserving one, or ``None`` if none remained.
+
+        A return value rather than an exception: running out of budget is the
+        expected end of a long turn, not a failure to report.
+        """
+
         with self.lock:
             if self.remaining <= 0:
-                raise ConsultationBudgetExceeded(
-                    "consultation budget exhausted for this coordinator turn"
-                )
+                return None
             self.remaining -= 1
             return self.remaining
 
@@ -331,17 +332,14 @@ class _TurnScope:
 def _build_consult_tool(
     node_id: str, children_by_node: dict[str, list[str]], scope: _TurnScope
 ) -> Any:
-    """One node's delegation tool, built after its children's.
+    """One node's delegation tool, which hands out its children's on demand.
 
-    Bottom-up so that by the time a node's own tool exists, the tools it can
-    delegate to are already closed over -- which is what makes the agent
-    hierarchy mirror the tree's shape rather than merely reference it.
+    The recursion is what makes the agent hierarchy mirror the tree's shape
+    rather than merely reference it: a node's advisor is handed exactly its
+    own children's tools, so a branch cannot reach across into another.
     """
 
-    child_tools = [
-        _build_consult_tool(child_id, children_by_node, scope)
-        for child_id in children_by_node.get(node_id, [])
-    ]
+    child_ids = children_by_node.get(node_id, [])
 
     def refuse(status: str, message: str) -> dict[str, Any]:
         # Best-effort: a refusal changed nothing, so a lost record must not
@@ -361,10 +359,11 @@ def _build_consult_tool(
         return {"node_id": node_id, "route": "refused", "message": message}
 
     def consult_node(instruction: str) -> dict[str, Any]:
-        try:
-            remaining = scope.budget.reserve()
-        except ConsultationBudgetExceeded as exc:
-            return refuse("budget_denied", str(exc))
+        remaining = scope.budget.reserve()
+        if remaining is None:
+            return refuse(
+                "budget_denied", "consultation budget exhausted for this coordinator turn"
+            )
 
         try:
             context = services.get_node_context(
@@ -381,10 +380,19 @@ def _build_consult_tool(
                 )
 
             result = scope.run_turn(
-                node_id,
                 instruction,
                 context=context,
-                tools=[*scope.base_tools(), *child_tools],
+                # Children built here rather than once up front: a tool is
+                # then never shared between two concurrent consultations,
+                # which is the same reason base_tools is a callable. It is
+                # also lazier -- a branch nobody consults costs nothing.
+                tools=[
+                    *scope.base_tools(),
+                    *(
+                        _build_consult_tool(child_id, children_by_node, scope)
+                        for child_id in child_ids
+                    ),
+                ],
                 model=scope.model,
                 agent_name=_consult_tool_name(node_id),
             )
@@ -493,7 +501,6 @@ def _build_consult_tool(
             )
             return {"node_id": node_id, "error": error}
 
-    child_ids = children_by_node.get(node_id, [])
     description = (
         f"Consult the advisor for node '{node_id}'. It can explain the node's "
         "current state or produce one proposal for human approval. "

@@ -285,9 +285,15 @@ def create_proposal(
     proposal = draft.model_copy(update={"content_hash": content_hash(payload)})
 
     try:
+        # Inserted at its final status in one commit, rather than written as
+        # "drafting" and then transitioned. Two commits meant a window where
+        # the proposal existed but the transition had failed -- the caller
+        # sees an exception and reasonably assumes nothing was written, then
+        # retries and files a second one. Nothing ever observed the
+        # intermediate state.
         proposals.create(
             proposal,
-            status="drafting",
+            status="pending_approval",
             require_head_revision_id=expected_revision_id,
             db_path=db_path,
         )
@@ -297,7 +303,6 @@ def create_proposal(
         # error so every caller sees one exception type for "the tree moved",
         # whichever of the three checks caught it.
         raise StaleBaseRevision(str(exc)) from exc
-    proposals.transition(proposal.id, "drafting", "pending_approval", db_path=db_path)
     return proposal
 
 
