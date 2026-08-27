@@ -31,6 +31,7 @@ _JOB = re.compile(r"^/api/advisor/jobs/(?P<job_id>[^/]+)$")
 _PROPOSAL = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)$")
 _PROPOSAL_APPROVE = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)/approve$")
 _PROPOSAL_REJECT = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)/reject$")
+_PROPOSAL_CONFIRM = re.compile(r"^/api/advisor/proposals/(?P<proposal_id>[^/]+)/confirm$")
 _TREES = re.compile(r"^/api/trees$")
 _TREE_SUMMARY = re.compile(r"^/api/trees/(?P<tree_id>[^/]+)/summary$")
 _TREE_PROPOSALS = re.compile(r"^/api/trees/(?P<tree_id>[^/]+)/proposals$")
@@ -258,6 +259,23 @@ def handle_post(
             "ok": True,
             "new_revision_id": result.new_revision_id,
             "approval_id": result.approval_id,
+        }
+
+    match = _PROPOSAL_CONFIRM.match(path)
+    if match:
+        proposal_id = _require_uuid(match["proposal_id"])
+        try:
+            result = services.confirm_proposal(proposal_id, db_path=db_path)
+        except services.confirmation_service.ProposalNotApplied as exc:
+            raise ApiError(409, str(exc)) from exc
+        except services.confirmation_service.NothingToConfirm as exc:
+            raise ApiError(422, str(exc)) from exc
+        return 200, {
+            "ok": True,
+            "status": result.status,
+            "confirmed": result.confirmed,
+            "max_abs_deviation": result.max_abs_deviation,
+            "deviations": result.deviations,
         }
 
     match = _PROPOSAL_REJECT.match(path)

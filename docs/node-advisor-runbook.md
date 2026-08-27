@@ -17,7 +17,7 @@ Il database condiviso è un unico file SQLite, risolto da `lazyportfolio.v2.db.r
 2. env var `LAZYPORTFOLIO_TREE_DB`;
 3. default: `<repo>/reports/tree_studio/tree_studio.sqlite3`.
 
-Le tabelle del Node Advisor (`tree_revisions`, `tree_heads`, `agent_conversations`, `agent_messages`, `agent_jobs`, `change_proposals`, `proposal_approvals`, `proposal_evidence`, `outbox_events`, `legacy_tree_names`) sono create additivamente (`CREATE TABLE IF NOT EXISTS`) da `lazyportfolio.v2.db.connect()` a ogni connessione -- niente comando di migrazione separato da eseguire.
+Le tabelle del Node Advisor (`tree_revisions`, `tree_heads`, `agent_conversations`, `agent_messages`, `agent_jobs`, `change_proposals`, `proposal_approvals`, `proposal_confirmations`, `proposal_evidence`, `outbox_events`, `legacy_tree_names`) sono create additivamente (`CREATE TABLE IF NOT EXISTS`) da `lazyportfolio.v2.db.connect()` a ogni connessione -- niente comando di migrazione separato da eseguire.
 
 ## 2. I due percorsi di un messaggio
 
@@ -73,7 +73,7 @@ Ogni passo è raggiungibile a partire dal solo `proposal_id` (o `conversation_id
 - **Evidence fetching non cablato.** `EvidenceRef.locator` esiste nel contratto ma nessun codice in `src/lazyportfolio/advisor` o `project/advisor` lo dereferenzia come path -- non c'è ancora una pipeline che recuperi il contenuto di una fonte a partire dal suo locator. `tests/advisor/test_redteam.py` prova strutturalmente che questo è vero oggi; un futuro PR che aggiunge il fetch **deve** validare/sandboxare `locator` (allowlist di schema, no path traversal) prima che quel test venga aggiornato per permetterlo.
 - **Reviewer disabilitato di default.** `project/advisor/reviewer.py`'s `review_proposal(..., enabled=False)` è il default -- nessuna chiamata a `claude_code` avviene a meno che un chiamante non passi esplicitamente `enabled=True`. Riabilitarlo esplicitamente quando serve una seconda opinione read-only su una proposta; non influisce mai sullo stato della proposta da solo.
 - **`POST /api/advisor/proposals/{id}/revise` non implementato.** Il piano originale (§9.1) lo elenca; l'MVP realizza una revisione creando una *nuova* conversazione/proposta invece di un endpoint dedicato -- semanticamente equivalente (ogni proposta è comunque immutabile, §4.3), ma non c'è un endpoint con quel nome esatto.
-- **Run di conferma non implementato.** Il contratto (`ProposalStatus`) e la state machine dichiarano gli stati `confirmation_pending`/`confirmed`/`confirmation_failed` (§4.5), e §1 del piano finalizzato descrive l'intento ("il run di conferma parte dopo il commit come job separato"), ma nessuna fase (0-5) ha mai incluso un task concreto per implementarlo -- `approval_service.apply_proposal` si ferma allo stato `applied`. Una proposta applicata oggi non transiterà mai automaticamente a `confirmed`. Gap del piano originale, non introdotto da questa fase; da valutare per Fase 6 se ancora rilevante.
+- ~~**Run di conferma non implementato.**~~ **Chiuso il 2026-08-27**, vedi §9. `approval_service.apply_proposal` si ferma ancora ad `applied` -- la conferma è un passo esplicito e separato (`POST /api/advisor/proposals/{id}/confirm`), non un effetto collaterale dell'approvazione: l'approvazione ha già committato, e una conferma fallita è un referto, non un annullamento.
 - **`Session` del Node Advisor è in-memory.** `project/advisor/agent.py`'s `_advisor_session()` costruisce un `Session(redact=...)` senza `db=`: la redazione (segreti + PII) è cablata da subito, ma nessun log LLM viene persistito su disco per ora. Se in futuro serve osservabilità persistente delle chiamate LLM stesse (non l'audit di dominio, già persistito -- vedi §4), va passato un `db=` esplicito, mantenendo lo stesso redattore.
 
 ## 6. Produttore batch (secondo producer, Fase 6)
@@ -170,3 +170,38 @@ modello è narrativa e non fa fede.
 **Limiti dichiarati:** il replay di un job (dopo un crash del worker) riparte
 con budget e dedup azzerati; il riassunto dell'albero entra intero nel prompt,
 senza tetto sulla lunghezza delle liste di strumenti.
+
+## 9. Run di conferma
+
+`applied` significa "il patch è stato scritto", non "il risultato è quello che
+ti avevo mostrato". La conferma colma la differenza: ri-risolve la revisione
+appena diventata head e confronta i pesi terminali con
+`counterfactual.variant["terminal_weights"]`, cioè esattamente ciò che l'umano
+ha visto quando ha approvato.
+
+```bash
+curl -sX POST http://127.0.0.1:8766/api/advisor/proposals/$PROPOSAL/confirm
+# {"ok": true, "status": "confirmed", "confirmed": true,
+#  "max_abs_deviation": 1.1e-16, "deviations": {}}
+```
+
+**Cosa NON è.** Non è un ricalcolo sui dati di oggi. Girare su dati freschi
+misurerebbe soprattutto quanto si è mosso il mercato da quando la proposta è
+stata scritta, il che non dice nulla su *come* è stata applicata, e renderebbe
+`confirmed` un'affermazione sulla stabilità dei mercati invece che sul
+sistema. Il confronto usa la stessa finestra dati che lo snapshot della
+proposta descrive, quindi uno scostamento indica un difetto nel patch o nel
+percorso di apply.
+
+**Perché un endpoint e non un job**, malgrado il piano dicesse "job separato":
+una riga in `agent_jobs` ha una foreign key verso una conversazione, e una
+proposta approvata via HTTP o prodotta dal produttore batch può non averne
+nessuna. Una chiamata esplicita dopo l'approvazione è la stessa separazione
+senza fingere.
+
+Esito e scostamenti finiscono in `proposal_confirmations` (una riga per
+proposta, sia in caso di successo sia di fallimento -- una conferma fallita è
+un referto da conservare) e lo stato della proposta passa a `confirmed` o
+`confirmation_failed`. Entrambi sono terminali: una seconda conferma viene
+rifiutata invece di riscrivere un verdetto già emesso. Il pannello chiama la
+conferma da solo dopo un'approvazione riuscita e riporta l'esito in chiaro.

@@ -172,6 +172,20 @@ CREATE TABLE IF NOT EXISTS proposal_approvals (
     result_json TEXT
 );
 
+-- The confirmation run's verdict, one row per applied proposal. Separate from
+-- proposal_approvals because approving and confirming answer different
+-- questions: approval records that a human agreed, confirmation records
+-- whether the applied tree actually produces the weights the proposal showed
+-- them. A proposal can be approved and then fail confirmation.
+CREATE TABLE IF NOT EXISTS proposal_confirmations (
+    proposal_id TEXT PRIMARY KEY REFERENCES change_proposals(proposal_id),
+    confirmed_at TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    max_abs_deviation REAL,
+    detail_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS proposal_evidence (
     proposal_id TEXT NOT NULL REFERENCES change_proposals(proposal_id),
     evidence_id TEXT NOT NULL,

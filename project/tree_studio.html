@@ -797,6 +797,16 @@
             });
             log('Approvata ' + proposal.node_id + ': revisione ' + result.new_revision_id.slice(0, 8));
             card.remove();
+            // The approval already committed, so a confirmation that fails is
+            // a finding to report -- never something that undoes the approval
+            // or is presented as the approval having failed.
+            try {
+              const check = await jsonFetch('/api/advisor/proposals/' + proposal.id + '/confirm', {});
+              log(check.confirmed
+                ? 'Conferma: l albero applicato produce i pesi mostrati.'
+                : 'CONFERMA FALLITA: scostamento massimo ' + check.max_abs_deviation.toExponential(2)
+                  + ' su ' + Object.keys(check.deviations).join(', '));
+            } catch (error) { log('Conferma non eseguita: ' + error.message); }
           } catch (error) { log('Errore approvazione ' + proposal.node_id + ': ' + error.message); }
         };
         const reject = document.createElement('button');

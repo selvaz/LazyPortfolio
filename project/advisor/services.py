@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from lazyportfolio.advisor import approval_service, node_universe
+from lazyportfolio.advisor import confirmation as confirmation_service
 from lazyportfolio.advisor import conversation_repository as conversations
 from lazyportfolio.advisor import counterfactual as counterfactual_service
 from lazyportfolio.advisor import proposal_repository as proposals
@@ -529,6 +530,32 @@ def approve_proposal(
     )
 
 
+def confirm_proposal(
+    proposal_id: UUID,
+    *,
+    backend: OptimizationDataBackend | None = None,
+    db_path: str | os.PathLike[str] | None = None,
+) -> confirmation_service.ConfirmationResult:
+    """Check that the applied tree produces the weights the proposal showed.
+
+    An endpoint rather than a queued job, though the plan called it a job: a
+    job row requires a conversation (foreign key), and a proposal approved
+    over HTTP or filed by the batch producer need not have one. Running it as
+    an explicit call after approval is the same separation without pretending
+    -- and it stays callable as a plain function by any producer.
+    """
+
+    return confirmation_service.confirm_applied_proposal(
+        proposal_id, backend=backend, db_path=db_path
+    )
+
+
+def get_confirmation(
+    proposal_id: UUID, *, db_path: str | os.PathLike[str] | None = None
+) -> dict[str, Any] | None:
+    return confirmation_service.get_confirmation(proposal_id, db_path=db_path)
+
+
 def reject_proposal(
     proposal_id: UUID,
     *,
@@ -548,7 +575,9 @@ __all__ = [
     "TreeNotFound",
     "approve_proposal",
     "create_conversation",
+    "confirm_proposal",
     "create_proposal",
+    "get_confirmation",
     "get_conversation",
     "get_head_revision_id",
     "get_node_context",
