@@ -322,6 +322,7 @@
       '#c-mean-reference-kind':'Riferimento per i pesi strategici usati SOLO dalla stima Equilibrium dei rendimenti attesi - indipendente dal risk reference sopra (TEV/target/cap non selezionano mai implicitamente questo). Nessuno: auto risolve sempre a Bayes-Stein (nessun equilibrium). Global B0: i pesi del benchmark dichiarato, rimappati automaticamente sulle colonne effettive del nodo (proxy raw nel Forward, serie sintetiche nel Backward) - richiede che ogni componente risolta dal nodo sia coperta dal benchmark. Pesi locali: pesi espliciti che devono coprire per intero l universo realmente risolto da questo nodo, incluse le sleeve assenti dal benchmark - nessun peso viene mai inventato.',
       '#n-inherits':'Sceglie da dove cercare il benchmark se il nodo non ne dichiara uno: root, genitore, entrambi o nessuno.'
     });
+    [['c-vol-reference',volReference],['c-max-vol-reference',maxVolReference],['c-mean-reference-kind',constraints.mean_reference_kind||'none']].forEach(([id,value])=>{const select=$(id);if(!select.querySelector('option[value="declared"]'))select.add(new Option('Benchmark locale dichiarato','declared'));if(value==='declared')select.value='declared';});
     $('addBenchmark').dataset.help='Aggiunge un benchmark locale. Il primo e quello usato per tracking error e vincoli di tracking error.';
     $('addBenchmark').title=$('addBenchmark').dataset.help;
     document.querySelectorAll('[data-remove-bm]').forEach(el=>el.title='Rimuove questo benchmark dal nodo.');

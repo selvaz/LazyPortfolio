@@ -19,7 +19,7 @@ RECOGNIZED_OBJECTIVES = {"min_risk", "max_return", "max_ratio", "max_utility", "
 #: node's own proxy is what its *parent* sees it as, never one of the node's
 #: own candidate columns, so "100% weight on my own father proxy" has no
 #: coherent meaning for that node's own equilibrium mean estimation.
-SUPPORTED_MEAN_REFERENCE_KINDS = {"none", "benchmark", "local_weights"}
+SUPPORTED_MEAN_REFERENCE_KINDS = {"none", "benchmark", "declared", "local_weights"}
 SUPPORTED_CONSTRAINT_POLICIES = {"hard_fail", "nearest_feasible"}
 #: The only reference currencies lazyportfolio.fx can convert between today
 #: (EURUSD=X/GBPUSD=X/USDJPY=X give full USD-pivoted coverage of exactly
@@ -83,6 +83,40 @@ def _clean_weight_mapping(
             )
         cleaned[str(instrument)] = parsed
     constraints[key] = cleaned
+
+
+def _normalize_node_benchmarks(raw_node: dict[str, Any], node_id: str) -> None:
+    """Validate benchmarks declared in Tree Studio for one node."""
+    raw_benchmarks = raw_node.get("benchmarks") or []
+    if not isinstance(raw_benchmarks, list):
+        raise ValueError(f"node {node_id}: benchmarks must be a list")
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_benchmarks, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"node {node_id}: benchmark {index} must be an object")
+        raw_weights = item.get("weights")
+        if not isinstance(raw_weights, dict) or not raw_weights:
+            raise ValueError(
+                f"node {node_id}: benchmark {index} requires non-empty weights"
+            )
+        weights = {
+            str(instrument): finite_float(
+                value, f"node {node_id} benchmark {index} weight[{instrument!r}]"
+            )
+            for instrument, value in raw_weights.items()
+        }
+        if any(weight < 0.0 for weight in weights.values()):
+            raise ValueError(f"node {node_id}: benchmark {index} weights must be non-negative")
+        if abs(sum(weights.values()) - 1.0) > 1e-6:
+            raise ValueError(f"node {node_id}: benchmark {index} weights must sum to one")
+        normalized.append(
+            {
+                "id": str(item.get("id") or f"{node_id}-benchmark-{index}"),
+                "name": str(item.get("name") or f"Benchmark {index}"),
+                "weights": weights,
+            }
+        )
+    raw_node["benchmarks"] = normalized
 
 
 def _normalize_reference(value: Any) -> str:
@@ -197,6 +231,7 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
 
     for raw_node in nodes:
         node_id = str(raw_node.get("id") or "<unknown>")
+        _normalize_node_benchmarks(raw_node, node_id)
         objective = str((raw_node.get("goal") or {}).get("objective") or "min_risk")
         if objective not in RECOGNIZED_OBJECTIVES:
             raise ValueError(

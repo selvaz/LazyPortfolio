@@ -135,6 +135,9 @@ class V2Node:
     proxy: str | None
     objective: str
     constraints: V2Constraints
+    # Tree Studio can attach named benchmarks to a node.  The first is the
+    # node's declared local anchor when a reference policy selects it.
+    benchmarks: tuple[V2Benchmark, ...] = ()
 
     def walk(self) -> list[V2Node]:
         nodes = [self]

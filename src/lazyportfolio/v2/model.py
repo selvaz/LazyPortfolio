@@ -155,6 +155,16 @@ class V2Model:
                         constraints.get("volatility_cap_policy") or "hard_fail"
                     ),
                 ),
+                benchmarks=tuple(
+                    V2Benchmark(
+                        name=str(item.get("name") or item.get("id") or "Benchmark"),
+                        weights={
+                            ticker(key): float(value)
+                            for key, value in item["weights"].items()
+                        },
+                    )
+                    for item in raw.get("benchmarks") or []
+                ),
             )
 
         benchmark_raw = normalized["backtest"]["benchmark"]

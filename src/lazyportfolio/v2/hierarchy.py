@@ -116,6 +116,7 @@ class HierarchicalV2Estimator:
             proxy=None,
             objective=model.root.objective,
             constraints=model.root.constraints,
+            benchmarks=model.root.benchmarks,
         )
         local, audit, child_columns = self._solve_local(
             flat,
@@ -681,8 +682,27 @@ class HierarchicalV2Estimator:
                 "hierarchy mode and is not supported in flat, forward or "
                 "forward_backward mode"
             )
-        if reference_kind in {"none", "manual", "declared"}:
+        if reference_kind in {"none", "manual"}:
             return None, None
+        if reference_kind == "declared":
+            if not node.benchmarks:
+                # ``declared`` has historically been the default TEV label in
+                # saved models without a local benchmark. Preserve that
+                # no-reference behaviour for compatibility; when a benchmark
+                # is declared, it becomes the effective local anchor.
+                return None, None
+            declared = node.benchmarks[0]
+            if not set(declared.weights).issubset(returns.columns):
+                missing = sorted(set(declared.weights) - set(returns.columns))
+                raise V2OptimizationError(
+                    f"{node.name}: declared benchmark series missing: {missing}"
+                )
+            series = (
+                returns.loc[:, list(declared.weights)]
+                .mul(declared.weights, axis="columns")
+                .sum(axis="columns")
+            )
+            return series.reindex(frame.index), dict(declared.weights)
         if reference_kind == "forward_root_reference":
             if node is model.root or node.id == "__global_flat__":
                 raise V2OptimizationError(
@@ -746,6 +766,16 @@ class HierarchicalV2Estimator:
                 node, context, dict(model.benchmark.weights), "benchmark"
             )
             return resolved, "benchmark"
+        if kind == "declared":
+            if not node.benchmarks:
+                raise V2OptimizationError(
+                    f"{node.name}: mean_reference_kind='declared' requires a local benchmark"
+                )
+            declared = node.benchmarks[0]
+            resolved = HierarchicalV2Estimator._resolve_component_weights_from_raw_map(
+                node, context, dict(declared.weights), "declared"
+            )
+            return resolved, "declared"
         if kind == "local_weights":
             declared = node.constraints.mean_reference_weights or {}
             resolved = HierarchicalV2Estimator._resolve_component_weights_from_raw_map(

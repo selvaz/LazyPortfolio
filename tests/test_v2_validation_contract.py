@@ -26,6 +26,7 @@ from lazyportfolio.v2.contracts import (
     audit_from_base,
     constraints_from_base,
 )
+from lazyportfolio.v2.hierarchy import HierarchicalV2Estimator as V2InternalEstimator
 from lazyportfolio.v2.moments import apply_views, estimate_moments
 from lazyportfolio.v2.validation import (
     boolean,
@@ -63,6 +64,37 @@ def _returns() -> pd.DataFrame:
             "ticker:B": [0.005, -0.002, 0.008, 0.004],
         }
     )
+
+
+def test_declared_node_benchmark_is_available_to_risk_and_equilibrium_axes() -> None:
+    config = _config(
+        {
+            "volatility_reference": "declared",
+            "tracking_error_reference": "declared",
+            "mean_reference_kind": "declared",
+        }
+    )
+    config["nodes"][0]["benchmarks"] = [
+        {"name": "Local strategic", "weights": {"A": 0.7, "B": 0.3}}
+    ]
+    model = V2Model.from_config(config)
+    node = model.root
+    returns = _returns()
+    reference, weights = V2InternalEstimator._risk_reference(
+        node, model, returns, returns, "declared", None
+    )
+
+    assert weights == {"ticker:A": 0.7, "ticker:B": 0.3}
+    pd.testing.assert_series_equal(
+        reference,
+        0.7 * returns["ticker:A"] + 0.3 * returns["ticker:B"],
+        check_names=False,
+    )
+
+    estimate = HierarchicalV2Estimator().estimate(
+        model, returns, mode="forward_backward", periods_per_year=12.0
+    )
+    assert estimate.node_results["Root"].audit.mean_reference_source == "declared"
 
 
 def test_numeric_and_boolean_helpers_fail_loudly() -> None:
