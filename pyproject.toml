@@ -33,7 +33,7 @@ lazydataspace = [
 # lazyportfolio.backend imports it lazily inside load_returns(), so the
 # package stays installable/testable with any OptimizationDataBackend,
 # including one that doesn't touch market-data-hub at all.
-datacore = ["market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@5be6c51da588d1d5a21225b473c69107c753bc6a"]
+datacore = ["market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@9ad84122261e034b0eb38644afc9e53654727d7d"]
 # Exact convex fast paths for the V2 solver router (v3 performance roadmap,
 # Phase B/C). Optional: solver.py imports each backend lazily inside the
 # route function that needs it, so the package stays usable without them --
