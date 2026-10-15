@@ -38,7 +38,7 @@ jobs:
           python -m venv /tmp/wheel-smoke
           /tmp/wheel-smoke/bin/pip install --upgrade pip
           /tmp/wheel-smoke/bin/pip install dist/*.whl
-          /tmp/wheel-smoke/bin/python -c "import lazyportfolio; print('lazyportfolio OK')"
+          /tmp/wheel-smoke/bin/python -c "import lazyportfolio, os; v = getattr(lazyportfolio, '__version__', None); assert v in (None, os.environ['GITHUB_REF_NAME'][1:]), f'__version__ {v} != tag'; print('lazyportfolio OK', v)"
       - name: SHA-256 checksums
         run: |
           cd dist
@@ -59,10 +59,14 @@ jobs:
         with:
           name: dist
           path: dist/
-      - name: Attach artifacts to the GitHub Release (created if missing)
+      - name: Publish the GitHub Release with its artifacts in one step
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "See CHANGELOG."
-          gh release upload "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" --clobber
+          # Create the release WITH the assets, so it is never visible empty; if it was
+          # created by hand first, attach (or replace) the assets on it.
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
