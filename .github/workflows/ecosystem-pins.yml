@@ -1,0 +1,29 @@
+name: ecosystem-pins
+
+# Every ecosystem sibling this repository installs (pyproject, requirements, CI) must use
+# exactly the ref in LazyTools/ecosystem/compatibility.toml -- one version for everything.
+# The check lives in LazyTools (tools/check_pins.py) so all repositories share one rule. The
+# script is fetched at a fixed commit (bump it deliberately); the manifest it reads is LazyTools
+# main on purpose, because the manifest is the single authority on versions.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pins match the ecosystem manifest
+        run: |
+          python -m pip install --upgrade pip packaging
+          curl -fsSL https://raw.githubusercontent.com/selvaz/LazyTools/2002bf84df841145094abd17ccdb2ef24355d312/tools/check_pins.py -o /tmp/check_pins.py
+          python /tmp/check_pins.py --repo .
