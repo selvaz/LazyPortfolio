@@ -25,5 +25,5 @@ jobs:
       - name: Pins match the ecosystem manifest
         run: |
           python -m pip install --upgrade pip packaging
-          curl -fsSL https://raw.githubusercontent.com/selvaz/LazyTools/2002bf84df841145094abd17ccdb2ef24355d312/tools/check_pins.py -o /tmp/check_pins.py
+          curl -fsSL https://raw.githubusercontent.com/selvaz/LazyTools/df8fef1cc96f5e64107d2e1c647f1aeccb996b92/tools/check_pins.py -o /tmp/check_pins.py
           python /tmp/check_pins.py --repo .
