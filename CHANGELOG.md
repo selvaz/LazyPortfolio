@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-10-18
+
+Release set `ecosystem-2026.10.5`. Only sibling pins move; no code changes.
+
+### Changed
+- `datacore` extra pins `market-data-hub` at `v0.3.2` (was `v0.3.1`).
+
 ## [0.2.3] — 2026-10-18
 
 Release set `ecosystem-2026.10.4`. Only sibling pins move; no code changes.
