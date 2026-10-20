@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-10-20
+
+Release set `ecosystem-2026.10.7`: sibling pins moved (market-data-hub v0.3.4 and the coupled refs).
+
 ## [0.2.5] — 2026-10-19
 
 Release set `ecosystem-2026.10.6`. Only sibling pins move; no code changes.
