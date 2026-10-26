@@ -99,7 +99,7 @@ if ($SiblingHub) {
     }
 } else {
     Invoke-Step "Installing market-data-hub from GitHub" {
-        Invoke-Native $VenvPython @("-m", "pip", "install", "market-data-hub @ git+https://github.com/selvaz/market-data-hub.git")
+        Invoke-Native $VenvPython @("-m", "pip", "install", "market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.3.9")
     }
 }
 

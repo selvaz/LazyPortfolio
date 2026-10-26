@@ -63,7 +63,7 @@ class MarketDataHubOptimizationBackend:
         except ImportError as exc:  # pragma: no cover - optional integration
             raise ImportError(
                 "portfolio optimization requires market-data-hub: pip install "
-                "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git'"
+                "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.3.9'"
             ) from exc
 
         if frequency != "D":
