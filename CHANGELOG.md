@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.8] — 2026-10-30
+
+### Changed
+- Sibling pins moved to the 2026-10-30 release set: market-data-hub v0.3.11.
+
 ## [0.2.7] — 2026-10-25
 
 Prepare for release set `ecosystem-2026.10.9` (LazyTools PR #221).
