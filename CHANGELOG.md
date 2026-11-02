@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.9] — 2026-11-02
+
+### Changed
+- market-data-hub pin v0.3.11 → v0.3.17 (2026-11-02 release set).
+
 ## [0.2.8] — 2026-10-30
 
 ### Changed
