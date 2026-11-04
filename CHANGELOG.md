@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.10] — 2026-11-04
+
+### Changed
+- market-data-hub pin moved from v0.3.17 to v0.3.22 (release train ecosystem-2026.11.2).
+
 ## [0.2.9] — 2026-11-02
 
 ### Changed
