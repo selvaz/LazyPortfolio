@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.12] — 2026-11-14
+
 ### Changed
 - market-data-hub pinned to v0.3.29 (Japan tier-1 macro coverage).
 
