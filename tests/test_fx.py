@@ -216,3 +216,39 @@ def test_load_fx_rates_missing_series_raises_typed_error(monkeypatch) -> None:
     with pytest.raises(MissingFxSeriesError, match="USDJPY=X") as info:
         load_fx_rates(None, None, currencies=["EUR", "JPY"])
     assert info.value.missing == {"JPY": "USDJPY=X"}
+
+
+def test_load_fx_rates_all_nan_needed_series_raises_typed_error(monkeypatch) -> None:
+    from lazyportfolio.fx import MissingFxSeriesError
+
+    index = pd.to_datetime(["2026-01-02", "2026-01-05"])
+    levels = pd.DataFrame({"EURUSD=X": [float("nan"), float("nan")]}, index=index)
+    _stub_market_data_hub_extract(monkeypatch, levels)
+
+    with pytest.raises(MissingFxSeriesError, match="EURUSD=X") as info:
+        load_fx_rates(None, None, currencies=["EUR"])
+    assert info.value.missing == {"EUR": "EURUSD=X"}
+
+
+def test_load_fx_rates_accepts_one_shot_iterator(monkeypatch) -> None:
+    index = pd.to_datetime(["2026-01-02", "2026-01-05"])
+    levels = pd.DataFrame({"EURUSD=X": [1.10, 1.11]}, index=index)
+    calls = _stub_market_data_hub_extract(monkeypatch, levels)
+
+    rates = load_fx_rates(None, None, currencies=iter(["EUR"]))
+
+    assert calls["symbols"] == ["EURUSD=X"]
+    assert list(rates.columns) == ["USD", "EUR"]
+
+
+def test_convert_prices_usd_instrument_unaffected_by_shorter_fx_series() -> None:
+    index = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"])
+    prices = pd.DataFrame(
+        {"ticker:SPY": [100.0, 101.0, 102.0], "ticker:VGK": [50.0, 51.0, 52.0]}, index=index
+    )
+    # FX data ends one day before the prices do.
+    fx = _fx_frame().iloc[:2]
+    converted = convert_prices(prices, {"ticker:SPY": "USD", "ticker:VGK": "EUR"}, "USD", fx)
+
+    assert converted["ticker:SPY"].tolist() == [100.0, 101.0, 102.0]
+    assert not converted["ticker:SPY"].pct_change().isna().iloc[1:].any()

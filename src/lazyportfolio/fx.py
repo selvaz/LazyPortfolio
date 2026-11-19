@@ -143,10 +143,11 @@ def load_fx_rates(
             "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.3.29'"
         ) from exc
 
-    unsupported = sorted(set(currencies or ()) - set(_USD_QUOTE_PAIRS) - {"USD"})
+    requested = None if currencies is None else set(currencies)
+    unsupported = sorted((requested or set()) - set(_USD_QUOTE_PAIRS) - {"USD"})
     if unsupported:
         raise ValueError(f"unsupported FX currency: {unsupported}")
-    wanted = [c for c in _USD_QUOTE_PAIRS if currencies is None or c in set(currencies)]
+    wanted = [c for c in _USD_QUOTE_PAIRS if requested is None or c in requested]
     pair_symbols = [_USD_QUOTE_PAIRS[c] for c in wanted]
     levels, _ = extract.extract_series(
         pair_symbols,
@@ -199,6 +200,10 @@ def convert_prices(
     converted = prices.copy()
     for column in prices.columns:
         native = native_currencies[column]
+        if native == target_currency:
+            # Already in the reference currency: leave the series untouched
+            # so it cannot depend on FX availability.
+            continue
         multiplier = fx[native] / target_usd_per_unit
         converted[column] = prices[column] * multiplier
     return converted
