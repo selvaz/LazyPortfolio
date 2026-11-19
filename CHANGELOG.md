@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.13] — 2026-11-19
+
+### Fixed
+- Optimizer calls no longer fail with a pandas `KeyError` on a market-data-hub
+  database without FX series. `load_returns` loads FX rates only for the
+  currencies the universe needs (none for an all-reference-currency universe),
+  and `load_fx_rates` raises `MissingFxSeriesError` naming the missing pair(s).
+
 ## [0.2.12] — 2026-11-14
 
 ### Changed

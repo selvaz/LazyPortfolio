@@ -150,8 +150,9 @@ def _stub_market_data_hub_with_currency(
     extract = types.ModuleType("market_data_hub.extract")
 
     def extract_series(symbols, *args, **kwargs):
-        if set(symbols) <= set(fx_pair_levels.columns):
-            return fx_pair_levels[symbols], {"source": "market-data-hub"}
+        if all(str(s).endswith("=X") for s in symbols):
+            present = [s for s in symbols if s in fx_pair_levels.columns]
+            return fx_pair_levels[present], {"source": "market-data-hub"}
         return prices[symbols], {"source": "market-data-hub"}
 
     extract.extract_series = extract_series  # type: ignore[attr-defined]
@@ -283,3 +284,28 @@ def test_load_returns_raises_naming_instrument_with_unknown_currency(monkeypatch
 
     with pytest.raises(ValueError, match="EEM"):
         MarketDataHubOptimizationBackend().load_returns(["EEM"], currency="USD")
+
+
+def test_load_returns_all_usd_universe_does_not_touch_fx(monkeypatch) -> None:
+    index = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"])
+    prices = pd.DataFrame({"SPY": [100.0, 101.0, 102.0]}, index=index)
+    # Hub without any FX series: requesting an FX pair would raise KeyError.
+    empty_fx = pd.DataFrame(index=index)
+    _stub_market_data_hub_with_currency(monkeypatch, prices, empty_fx, {"SPY": "USD"})
+
+    dataset = MarketDataHubOptimizationBackend().load_returns(["SPY"], currency="USD")
+
+    assert dataset.returns["ticker:SPY"].iloc[1] == pytest.approx(0.01)
+
+
+def test_load_returns_eur_instrument_without_fx_data_raises_clear_error(monkeypatch) -> None:
+    from lazyportfolio.fx import MissingFxSeriesError
+
+    index = pd.to_datetime(["2026-01-02", "2026-01-05", "2026-01-06"])
+    prices = pd.DataFrame({"VGK": [50.0, 51.0, 52.0]}, index=index)
+    _stub_market_data_hub_with_currency(
+        monkeypatch, prices, pd.DataFrame(index=index), {"VGK": "EUR"}
+    )
+
+    with pytest.raises(MissingFxSeriesError, match="EURUSD=X"):
+        MarketDataHubOptimizationBackend().load_returns(["VGK"], currency="USD")

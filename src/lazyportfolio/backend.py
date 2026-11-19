@@ -118,11 +118,19 @@ class MarketDataHubOptimizationBackend:
             from lazyportfolio import fx
 
             instrument_currencies = fx.instrument_currencies(symbols, db_path=self._db_path)
-            fx_rates = fx.load_fx_rates(start or None, end or None, db_path=self._db_path)
             native_by_label = dict(
                 zip(labels, (instrument_currencies[s] for s in symbols), strict=True)
             )
-            aligned_prices = fx.convert_prices(aligned_prices, native_by_label, currency, fx_rates)
+            # Load FX only for currencies the conversion needs: an
+            # all-reference-currency universe never touches FX data.
+            needed = fx.currencies_needing_fx(native_by_label.values(), currency)
+            if needed:
+                fx_rates = fx.load_fx_rates(
+                    start or None, end or None, db_path=self._db_path, currencies=needed
+                )
+                aligned_prices = fx.convert_prices(
+                    aligned_prices, native_by_label, currency, fx_rates
+                )
 
         # ``fill_method=None`` prevents pandas from applying a second,
         # implicit fill while deriving returns.
