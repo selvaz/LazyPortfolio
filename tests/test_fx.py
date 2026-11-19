@@ -57,7 +57,7 @@ def _stub_market_data_hub_extract(monkeypatch, levels: pd.DataFrame) -> dict[str
     def extract_series(symbols, *args, **kwargs):
         calls["symbols"] = symbols
         calls.update(kwargs)
-        return levels[symbols], {"source": "market-data-hub"}
+        return levels[[s for s in symbols if s in levels.columns]], {"source": "market-data-hub"}
 
     extract_module.extract_series = extract_series  # type: ignore[attr-defined]
     root = types.ModuleType("market_data_hub")
@@ -193,3 +193,26 @@ def test_convert_prices_rejects_unsupported_target_currency() -> None:
 
 def test_supported_currencies_is_exactly_four() -> None:
     assert SUPPORTED_CURRENCIES == {"USD", "EUR", "GBP", "JPY"}
+
+
+def test_load_fx_rates_requests_only_needed_currencies(monkeypatch) -> None:
+    index = pd.to_datetime(["2026-01-02", "2026-01-05"])
+    levels = pd.DataFrame({"EURUSD=X": [1.10, 1.11]}, index=index)
+    calls = _stub_market_data_hub_extract(monkeypatch, levels)
+
+    rates = load_fx_rates(None, None, currencies=["EUR"])
+
+    assert calls["symbols"] == ["EURUSD=X"]
+    assert list(rates.columns) == ["USD", "EUR"]
+
+
+def test_load_fx_rates_missing_series_raises_typed_error(monkeypatch) -> None:
+    from lazyportfolio.fx import MissingFxSeriesError
+
+    index = pd.to_datetime(["2026-01-02", "2026-01-05"])
+    levels = pd.DataFrame({"EURUSD=X": [1.1, 1.2]}, index=index)
+    _stub_market_data_hub_extract(monkeypatch, levels)
+
+    with pytest.raises(MissingFxSeriesError, match="USDJPY=X") as info:
+        load_fx_rates(None, None, currencies=["EUR", "JPY"])
+    assert info.value.missing == {"JPY": "USDJPY=X"}

@@ -38,6 +38,31 @@ _USD_QUOTE_PAIRS = {
 }
 
 
+class MissingFxSeriesError(ValueError):
+    """A needed FX pair has no series in the market-data-hub database."""
+
+    def __init__(self, missing: dict[str, str]) -> None:
+        self.missing = dict(missing)
+        pairs = ", ".join(f"{pair} (for {ccy})" for ccy, pair in sorted(self.missing.items()))
+        super().__init__(
+            f"missing FX series in market-data-hub: {pairs}. Load these price series "
+            "into the hub (e.g. datahub_ensure_price_history) or use instruments "
+            "quoted in the portfolio reference currency."
+        )
+
+
+def currencies_needing_fx(native_currencies: Any, target_currency: str) -> list[str]:
+    """Non-USD currencies whose FX series are required for the conversion.
+
+    Empty when every instrument already trades in ``target_currency`` -- the
+    conversion is then a no-op and FX data must not be touched at all.
+    """
+    natives = set(native_currencies)
+    if natives <= {target_currency}:
+        return []
+    return sorted((natives | {target_currency}) - {"USD"})
+
+
 def instrument_currencies(
     symbols: list[str], *, db_path: str | None = None
 ) -> dict[str, str]:
@@ -95,8 +120,13 @@ def load_fx_rates(
     *,
     db_path: str | None = None,
     max_gap: int = DEFAULT_MAX_GAP,
+    currencies: Any = None,
 ) -> Any:
-    """USD-pivoted FX levels: one column per supported currency, "USD per 1 unit".
+    """USD-pivoted FX levels: "USD per 1 unit" for ``USD`` plus the needed currencies.
+
+    ``currencies`` limits the request to those non-USD currencies (default:
+    all supported). Raises :class:`MissingFxSeriesError` naming any pair the
+    hub does not hold.
 
     ``USD`` is a constant ``1.0`` column. Aligned the same way instrument
     prices are (:func:`lazyportfolio.price_alignment.align_levels`) -- an FX
@@ -113,7 +143,11 @@ def load_fx_rates(
             "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.3.29'"
         ) from exc
 
-    pair_symbols = list(_USD_QUOTE_PAIRS.values())
+    unsupported = sorted(set(currencies or ()) - set(_USD_QUOTE_PAIRS) - {"USD"})
+    if unsupported:
+        raise ValueError(f"unsupported FX currency: {unsupported}")
+    wanted = [c for c in _USD_QUOTE_PAIRS if currencies is None or c in set(currencies)]
+    pair_symbols = [_USD_QUOTE_PAIRS[c] for c in wanted]
     levels, _ = extract.extract_series(
         pair_symbols,
         start=start or None,
@@ -125,16 +159,17 @@ def load_fx_rates(
         fillna="none",
         db_path=db_path,
     )
-    levels = levels.rename(columns={pair: currency for currency, pair in _USD_QUOTE_PAIRS.items()})[
-        list(_USD_QUOTE_PAIRS)
-    ]
+    present = set(levels.columns[levels.notna().any()]) if len(levels.columns) else set()
+    missing = {c: _USD_QUOTE_PAIRS[c] for c in wanted if _USD_QUOTE_PAIRS[c] not in present}
+    if missing:
+        raise MissingFxSeriesError(missing)
+    levels = levels.rename(columns={_USD_QUOTE_PAIRS[c]: c for c in wanted})[wanted]
     aligned = align_levels(levels, max_gap=max_gap).frame
 
     usd_per_unit = pd.DataFrame(index=aligned.index)
     usd_per_unit["USD"] = 1.0
-    usd_per_unit["EUR"] = aligned["EUR"]
-    usd_per_unit["GBP"] = aligned["GBP"]
-    usd_per_unit["JPY"] = 1.0 / aligned["JPY"]
+    for currency in wanted:
+        usd_per_unit[currency] = 1.0 / aligned[currency] if currency == "JPY" else aligned[currency]
     return usd_per_unit
 
 
@@ -171,7 +206,9 @@ def convert_prices(
 
 __all__ = [
     "SUPPORTED_CURRENCIES",
+    "MissingFxSeriesError",
     "convert_prices",
+    "currencies_needing_fx",
     "instrument_currencies",
     "load_fx_rates",
 ]
