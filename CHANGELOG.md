@@ -5,7 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.2.13] — 2026-11-19
+## [0.2.13] — 2026-11-20
+
+### Changed
+- market-data-hub pinned to v0.4.0 (`datacore` extra, install script and error hints): default XBRL mapping v3, shared DuckDB connection handle, schema 34.
 
 ### Fixed
 - Optimizer calls no longer fail with a pandas `KeyError` on a market-data-hub
