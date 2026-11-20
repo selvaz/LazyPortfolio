@@ -79,7 +79,7 @@ def instrument_currencies(
     except ImportError as exc:  # pragma: no cover - optional integration
         raise ImportError(
             "currency conversion requires market-data-hub: pip install "
-            "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.3.29'"
+            "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.4.0'"
         ) from exc
 
     placeholders = ", ".join("?" for _ in normalized)
@@ -140,7 +140,7 @@ def load_fx_rates(
     except ImportError as exc:  # pragma: no cover - optional integration
         raise ImportError(
             "currency conversion requires market-data-hub: pip install "
-            "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.3.29'"
+            "'market-data-hub @ git+https://github.com/selvaz/market-data-hub.git@v0.4.0'"
         ) from exc
 
     requested = None if currencies is None else set(currencies)
